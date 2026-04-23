@@ -7,18 +7,66 @@ authors = [
     { name = "Sean Koval", email = "seanmkoval@gmail.com" }
 ]
 requires-python = ">=3.11"
-dependencies = []
+dependencies = [
+    "typer>=0.15.1",
+    "rich>=13.9.4",
+    "python-dateutil>=2.9.0",
+    "python-dotenv>=1.1.1",
+    "intervals-icu-mcp",
+]
 
 [project.scripts]
 coach = "tempo.cli:main"
+
+[tool.uv.sources]
+intervals-icu-mcp = { path = "./mcp-servers/intervals-icu-mcp", editable = true }
 
 [build-system]
 requires = ["hatchling"]
 build-backend = "hatchling.build"
 
-[dependency-groups]
-# Populated per-phase. Keep the base project lean.
-# phase-1 (sync/derive): requests, pydantic, typer, python-dateutil
-# phase-2 (embed/vectors): fastembed, lancedb, pyyaml, markdown-it-py
-# phase-3 (coach-db MCP): mcp, fastmcp
-dev = []
+[tool.hatch.build.targets.wheel]
+packages = ["src/tempo"]
+
+[tool.uv]
+dev-dependencies = [
+    "pytest>=8.4.2",
+    "pytest-asyncio>=1.2.0",
+    "respx>=0.22.0",
+    "ruff>=0.14.0",
+    "pyright>=1.1.406",
+]
+
+[tool.pytest.ini_options]
+asyncio_mode = "auto"
+testpaths = ["tests"]
+python_files = ["test_*.py"]
+python_classes = ["Test*"]
+python_functions = ["test_*"]
+
+[tool.ruff]
+line-length = 100
+target-version = "py311"
+
+[tool.ruff.format]
+quote-style = "double"
+indent-style = "space"
+skip-magic-trailing-comma = false
+line-ending = "auto"
+
+[tool.ruff.lint]
+select = ["E", "F", "B", "I", "UP"]
+ignore = ["E501"]
+
+[tool.ruff.lint.per-file-ignores]
+"__init__.py" = ["F401"]
+
+[tool.pyright]
+include = ["src"]
+strict = ["src"]
+pythonVersion = "3.11"
+typeCheckingMode = "basic"
+reportMissingTypeStubs = false
+reportUnknownMemberType = false
+reportUnknownArgumentType = false
+reportUnknownVariableType = false
