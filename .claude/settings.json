@@ -38,11 +38,38 @@
   "permissions": {
     "allow": [
       "Bash(uv run:*)",
-      "Bash(git status)",
+      "Bash(uv sync:*)",
+      "Bash(uv add:*)",
+      "Bash(git status:*)",
       "Bash(git diff:*)",
       "Bash(git log:*)",
       "Bash(git add:*)",
+      "Bash(git show:*)",
+      "Bash(git branch:*)",
+      "Bash(git remote -v)",
+      "Bash(git submodule status:*)",
+      "Bash(git ls-files:*)",
+      "Bash(bd ready)",
+      "Bash(bd list:*)",
+      "Bash(bd show:*)",
+      "Bash(bd stats)",
+      "Bash(bd blocked:*)",
+      "Bash(bd create:*)",
+      "Bash(bd update:*)",
+      "Bash(bd close:*)",
+      "Bash(bd dep:*)",
+      "Bash(bd sync --flush-only)",
+      "Bash(bd prime)",
+      "Bash(make can-release)",
+      "Bash(make test:*)",
+      "Bash(make lint:*)",
       "Bash(sqlite3 data/coach.db:*)"
+    ],
+    "deny": [
+      "Bash(git push --force:*)",
+      "Bash(git push:*main*)",
+      "Bash(git reset --hard:*)",
+      "Bash(rm -rf:*)"
     ]
   }
 }
