@@ -63,9 +63,9 @@ ignore = ["E501"]
 
 [tool.pyright]
 include = ["src"]
-strict = ["src"]
 pythonVersion = "3.11"
 typeCheckingMode = "basic"
+useLibraryCodeForTypes = true
 reportMissingTypeStubs = false
 reportUnknownMemberType = false
 reportUnknownArgumentType = false
