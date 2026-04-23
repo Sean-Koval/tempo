@@ -217,16 +217,18 @@ def _print_active_injuries() -> None:
     if not m:
         return
 
-    # Capture lines up to the next heading.
+    # Capture lines up to the next ## heading, stripping HTML-comment templates.
     tail = text[m.end():]
     next_h = re.search(r"^##\s+", tail, re.MULTILINE)
     section = tail[: next_h.start()] if next_h else tail
+    section = re.sub(r"<!--.*?-->", "", section, flags=re.DOTALL)
+
+    # Active entries are ### headings (one per injury); bullet lines are details.
     flags = [
-        ln.lstrip("-*• ").strip()
+        ln[4:].strip()
         for ln in section.splitlines()
-        if ln.strip() and not ln.startswith("#")
+        if ln.startswith("### ")
     ]
-    flags = [f for f in flags if f and f.lower() != "none"]
 
     if flags:
         console.print("[bold red]Active injury flags[/bold red]")
