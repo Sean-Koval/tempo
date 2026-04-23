@@ -1,0 +1,3 @@
+[submodule "mcp-servers/intervals-icu-mcp"]
+	path = mcp-servers/intervals-icu-mcp
+	url = https://github.com/eddmann/intervals-icu-mcp.git

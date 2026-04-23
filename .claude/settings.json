@@ -7,11 +7,11 @@
         "run",
         "--directory",
         "./mcp-servers/intervals-icu-mcp",
-        "intervals-mcp"
+        "intervals-icu-mcp"
       ],
       "env": {
-        "INTERVALS_ATHLETE_ID": "${INTERVALS_ATHLETE_ID}",
-        "INTERVALS_API_KEY": "${INTERVALS_API_KEY}"
+        "INTERVALS_ICU_ATHLETE_ID": "${INTERVALS_ICU_ATHLETE_ID}",
+        "INTERVALS_ICU_API_KEY": "${INTERVALS_ICU_API_KEY}"
       }
     }
   },
