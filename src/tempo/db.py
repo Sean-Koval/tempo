@@ -118,11 +118,10 @@ def connect(path: Path | str | None = None) -> sqlite3.Connection:
     db_path = Path(path) if path is not None else coach_db_path()
     db_path.parent.mkdir(parents=True, exist_ok=True)
 
-    conn = sqlite3.connect(
-        db_path,
-        detect_types=sqlite3.PARSE_DECLTYPES | sqlite3.PARSE_COLNAMES,
-        isolation_level=None,  # autocommit; use explicit transactions
-    )
+    # No detect_types: intervals.icu serialises timestamps as "YYYY-MM-DDThh:mm:ss"
+    # which sqlite3's builtin converter can't parse (it wants a space separator).
+    # We read them back as strings and parse explicitly where needed.
+    conn = sqlite3.connect(db_path, isolation_level=None)
     conn.row_factory = sqlite3.Row
     conn.execute("PRAGMA journal_mode = WAL")
     conn.execute("PRAGMA foreign_keys = ON")
