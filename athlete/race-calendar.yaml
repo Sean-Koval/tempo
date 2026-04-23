@@ -1,0 +1,31 @@
+# Race calendar. A/B/C priority drives tapering and peak alignment.
+# The A-race anchors bootstrap-plan's phase back-calculation.
+#
+# Priority semantics:
+#   A — peak for it; full taper, plan revolves around it.
+#   B — race through it; light freshening, no full taper.
+#   C — train through; no taper, race-as-workout.
+#
+# Every race added here should have a corresponding plan-id eventually.
+
+races: []
+
+# Example — uncomment and edit:
+#
+# races:
+#   - id: 2026-ironman-lake-placid
+#     name: "Ironman Lake Placid"
+#     date: 2026-07-26
+#     distance: ironman        # ironman | half_ironman | olympic | sprint | marathon | half | 10k | 5k
+#     priority: A
+#     location: "Lake Placid, NY"
+#     expected_conditions:
+#       terrain: "hilly, 6000ft climbing on bike"
+#       water_temp_c: 21
+#       air_temp_c: [18, 28]
+#     goals:
+#       finish_time: "10:30:00"
+#       bike_power_target_w: 205    # ~68% of FTP
+#       run_pace_target: "5:15/km"
+#     notes: |
+#       Multi-loop, wetsuit-legal most years. Hilly bike rewards pacing discipline.

@@ -1,0 +1,137 @@
+# Trusted source registry. Anything ingested into knowledge/research/
+# that isn't in this list gets `credibility: unvetted` and the agent
+# flags it in retrieval.
+#
+# Credibility levels (highest to lowest):
+#   peer_reviewed               — published in a refereed journal, or by a working scientist
+#   expert_practitioner         — long-tenured coach with a public body of work
+#   evidence_based_journalism   — writer/podcaster who cites primary sources well
+#   experiential                — forum posts, self-experiments, anecdote
+
+sources:
+  # ---- Periodization & training theory ----
+  - id: friel-triathletes-training-bible
+    name: "The Triathlete's Training Bible (Joe Friel)"
+    type: book
+    credibility: expert_practitioner
+    topics: [periodization, ironman, threshold, zones]
+
+  - id: friel-blog
+    name: "Joe Friel's Blog — joefrielsblog.com"
+    type: blog
+    credibility: expert_practitioner
+    topics: [periodization, masters_athletes, planning]
+
+  - id: seiler-polarized
+    name: "Stephen Seiler — polarized training research"
+    type: academic
+    credibility: peer_reviewed
+    topics: [polarized, intensity_distribution, z2]
+
+  - id: magness-science-of-running
+    name: "Steve Magness — The Science of Running / Do Hard Things"
+    type: expert_blog
+    credibility: expert_practitioner
+    topics: [run_physiology, threshold, durability]
+
+  - id: cts-blog
+    name: "Carmichael Training Systems — trainright.com"
+    type: blog
+    credibility: expert_practitioner
+    topics: [ironman, cycling, pacing, endurance]
+
+  - id: couzens-endurance-corner
+    name: "Alan Couzens — alancouzens.com"
+    type: expert_blog
+    credibility: expert_practitioner
+    topics: [ironman, aerobic_development, data_driven_coaching]
+
+  - id: fitzgerald-80-20
+    name: "Matt Fitzgerald — 80/20 Running & Endurance"
+    type: book
+    credibility: evidence_based_journalism
+    topics: [polarized, intensity_distribution, race_pacing]
+
+  - id: vance-run-with-power
+    name: "Jim Vance — Run with Power / Triathlon 2.0"
+    type: book
+    credibility: expert_practitioner
+    topics: [run_power, metrics, coaching]
+
+  - id: trainingpeaks-blog
+    name: "TrainingPeaks Blog"
+    type: blog
+    credibility: expert_practitioner
+    topics: [tss, ctl_atl_tsb, ironman, periodization]
+
+  # ---- Nutrition ----
+  - id: jeukendrup-mysportscience
+    name: "Asker Jeukendrup — mysportscience.com"
+    type: expert_blog
+    credibility: peer_reviewed
+    topics: [nutrition, carb_loading, in_race_fueling, gut_training]
+
+  - id: burke-clinical-sports-nutrition
+    name: "Louise Burke — Clinical Sports Nutrition"
+    type: book
+    credibility: peer_reviewed
+    topics: [nutrition, periodized_nutrition, hydration]
+
+  - id: featherstone-feedthemachine
+    name: "Feed the Machine / Precision Fuel & Hydration podcast"
+    type: podcast
+    credibility: evidence_based_journalism
+    topics: [nutrition, hydration, sodium, race_day]
+
+  # ---- Environmental / heat ----
+  - id: periard-heat-acclimation
+    name: "Julien Périard — heat acclimation research"
+    type: academic
+    credibility: peer_reviewed
+    topics: [heat, acclimation, humid_conditions]
+
+  # ---- Strength for endurance ----
+  - id: ronnestad-strength
+    name: "Bent Rønnestad — strength training for endurance athletes"
+    type: academic
+    credibility: peer_reviewed
+    topics: [strength, endurance_performance, economy]
+
+  # ---- Ironman-specific ----
+  - id: koop-training-essentials-ultra
+    name: "Jason Koop — Training Essentials for Ultrarunning (applicable principles)"
+    type: book
+    credibility: expert_practitioner
+    topics: [durability, fueling, long_events]
+
+  - id: dixon-fast-forward
+    name: "Matt Dixon — Fast-Track Triathlete / purplepatch"
+    type: book
+    credibility: expert_practitioner
+    topics: [ironman, time_crunched, recovery, sustainable_performance]
+
+  # ---- Physiology / primary sources ----
+  - id: pubmed
+    name: "PubMed / peer-reviewed journals"
+    type: academic_database
+    credibility: peer_reviewed
+    topics: [everything]
+
+  - id: scholar
+    name: "Google Scholar"
+    type: academic_database
+    credibility: peer_reviewed
+    topics: [everything]
+
+  # ---- Podcasts (context, not primary) ----
+  - id: endurance-innovation
+    name: "Endurance Innovation podcast"
+    type: podcast
+    credibility: evidence_based_journalism
+    topics: [ironman, physiology, coaching]
+
+  - id: fast-talk-labs
+    name: "Fast Talk Labs"
+    type: podcast
+    credibility: evidence_based_journalism
+    topics: [endurance, physiology, coaching]

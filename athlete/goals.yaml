@@ -1,0 +1,21 @@
+# Non-race goals. Parallel to race-calendar.yaml; both can drive bootstrap-plan.
+#
+# Goals without a hard end date get a rolling 12-week block with checkpoints.
+# Goals with an end date get full phase back-calculation.
+
+goals: []
+
+# Example — uncomment and edit:
+#
+# goals:
+#   - id: 2026-ftp-300w
+#     title: "Raise bike FTP to 300W"
+#     target_date: 2026-09-01   # optional; omit for open-ended
+#     metric: ftp_w
+#     current: 260              # will be pulled from profile.yaml at bootstrap
+#     target: 300
+#     constraints:
+#       weekly_hours_max: 12
+#       priority_vs_run: "run takes precedence if conflict"
+#     notes: |
+#       Step-ramp approach — 3-week blocks ending in a test.

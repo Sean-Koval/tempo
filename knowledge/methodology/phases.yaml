@@ -1,0 +1,85 @@
+# Macro phase template used by bootstrap-plan to back-calculate from an
+# A-race. Weeks are approximate; bootstrap-plan may compress/expand based
+# on available runway and athlete state.
+
+ironman_full_24wk:
+  description: "Friel/80-20 hybrid, 24 weeks, assumes ~8-12 h/wk average."
+  total_weeks: 24
+  phases:
+    - id: anatomical_adaptation
+      weeks: 4
+      goal: "tissue prep, technique, low-intensity aerobic foundation"
+      intensity_distribution: { z1_z2: 90, z3: 8, z4_plus: 2 }
+      volume_ramp: "+10%/wk capped at athlete ceiling"
+      key_sessions: [easy_aerobic_run, easy_aerobic_ride, technique_swim, strength_foundation]
+
+    - id: base
+      weeks: 8
+      goal: "aerobic capacity, durability, Z2 density"
+      intensity_distribution: { z1_z2: 85, z3: 10, z4_plus: 5 }
+      volume_ramp: "3-wk build, 1-wk recovery pattern"
+      key_sessions: [long_ride_z2, long_run_z2, tempo_bike_block, cruise_interval_run, aerobic_swim_set]
+
+    - id: build
+      weeks: 6
+      goal: "race-specific intensity, muscular endurance, pacing"
+      intensity_distribution: { z1_z2: 75, z3: 15, z4_plus: 10 }
+      volume_ramp: "2-wk build, 1-wk recovery; peak volume by wk 4"
+      key_sessions: [race_pace_bike, threshold_run, brick_run_off_bike, longer_long_ride, race_pace_swim]
+
+    - id: peak
+      weeks: 4
+      goal: "sharpening, race simulation, fueling rehearsal"
+      intensity_distribution: { z1_z2: 75, z3: 15, z4_plus: 10 }
+      volume_ramp: "volume steady-to-down; quality up"
+      key_sessions: [race_sim_brick, race_pace_long_ride, race_day_fueling_rehearsal, tune_up_race]
+
+    - id: taper
+      weeks: 2
+      goal: "freshen without detraining"
+      intensity_distribution: { z1_z2: 80, z3: 15, z4_plus: 5 }
+      volume_ramp: "-40% vol in wk-1-out, -60% in race week; maintain intensity exposure"
+      key_sessions: [short_race_pace_opener, easy_spin, race_week_primer_run]
+
+ironman_half_16wk:
+  description: "70.3 build, 16 weeks."
+  total_weeks: 16
+  phases:
+    - id: base
+      weeks: 6
+      goal: "aerobic foundation + durability"
+      intensity_distribution: { z1_z2: 85, z3: 10, z4_plus: 5 }
+      key_sessions: [long_ride_z2, long_run_z2, cruise_intervals]
+    - id: build
+      weeks: 6
+      goal: "race-specific intensity and pacing"
+      intensity_distribution: { z1_z2: 75, z3: 15, z4_plus: 10 }
+      key_sessions: [race_pace_bike, threshold_run, brick_run_off_bike]
+    - id: peak
+      weeks: 2
+      goal: "sharpening and race sim"
+      intensity_distribution: { z1_z2: 75, z3: 15, z4_plus: 10 }
+      key_sessions: [race_sim_brick, tune_up_race]
+    - id: taper
+      weeks: 2
+      goal: "freshen without detraining"
+      intensity_distribution: { z1_z2: 80, z3: 15, z4_plus: 5 }
+      key_sessions: [short_race_pace_opener, easy_spin]
+
+# Open-ended rolling block used when no target date is set.
+rolling_base_block_12wk:
+  description: "No race target. Bias toward durability and aerobic capacity; checkpoint every 4 weeks."
+  total_weeks: 12
+  phases:
+    - id: block_1
+      weeks: 4
+      goal: "establish volume baseline"
+      key_sessions: [long_ride_z2, long_run_z2, technique_swim]
+    - id: block_2
+      weeks: 4
+      goal: "density + durability"
+      key_sessions: [long_ride_z2_with_surges, long_run_z2_with_hills, cruise_intervals]
+    - id: block_3
+      weeks: 4
+      goal: "bridge — introduce race-pace touches"
+      key_sessions: [race_pace_bike, tempo_run, longer_long_ride]

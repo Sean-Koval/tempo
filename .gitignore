@@ -1,0 +1,36 @@
+# Secrets
+.env
+.env.*
+!.env.example
+
+# Generated / rebuildable data — never commit
+data/coach.db
+data/coach.db-journal
+data/coach.db-wal
+data/coach.db-shm
+data/vectors/
+data/raw/
+data/events.jsonl
+
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+.venv/
+venv/
+*.egg-info/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+
+# Editors / OS
+.vscode/
+.idea/
+*.swp
+.DS_Store
+
+# uv
+.uv/
+
+# Local Claude permissions — keep personal prefs out
+.claude/settings.local.json

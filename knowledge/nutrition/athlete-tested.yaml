@@ -1,0 +1,24 @@
+# Athlete-tested fueling log. What Sean has actually trialed and tolerated.
+# Outranks generic literature when they conflict (per coaching preferences).
+# Updated after every long session and race sim.
+
+# Schema per entry:
+#   - date:            YYYY-MM-DD
+#     session_type:    long_ride_z2 | long_run_z2 | race_pace_bike | brick_run_off_bike | race_sim_brick | ...
+#     duration_h:      float
+#     conditions:      { temp_c, humidity_pct, notes }
+#     products:
+#       - name: "Maurten Gel 160"
+#         qty: 4
+#         carbs_g_per: 40
+#     totals:
+#       carbs_g: 160
+#       carbs_g_per_hr: 40
+#       sodium_mg: 900
+#       fluid_ml: 1200
+#     gut_response: 1-5   # 5 = perfect, 1 = catastrophic
+#     performance_notes: |
+#       Pace held through hour 3 with no GI issues. Last hour felt thin — probably needed +20g/hr.
+#     tags: [gel_heavy, cold, flat_course]
+
+entries: []

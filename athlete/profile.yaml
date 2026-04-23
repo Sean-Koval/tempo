@@ -1,0 +1,52 @@
+# Athlete profile — current physiological state.
+# Update thresholds after every field test; keep zones in sync.
+# Sourced partially from intervals.icu — `coach sync` can seed these.
+
+athlete:
+  name: Sean Koval
+  dob: # YYYY-MM-DD — for age-graded and HR zone calcs
+  weight_kg:       # TODO
+  height_cm:       # TODO
+
+thresholds:
+  ftp_w:           # TODO — most recent 20-min or ramp test
+  ftp_tested: # YYYY-MM-DD
+  lthr_bpm:        # TODO — lactate threshold HR
+  run_threshold_pace: # "4:15/km" or "6:50/mi" — most recent test
+  swim_css_pace:   # "1:35/100m" — critical swim speed
+  max_hr:          # TODO
+  resting_hr:      # TODO
+
+zones:
+  # Bike — %FTP (Coggan 7-zone)
+  bike_power:
+    z1_active_recovery: [0, 55]
+    z2_endurance: [56, 75]
+    z3_tempo: [76, 90]
+    z4_lactate_threshold: [91, 105]
+    z5_vo2max: [106, 120]
+    z6_anaerobic: [121, 150]
+    z7_neuromuscular: [151, 200]
+  # Run — Friel 7-zone by LTHR
+  run_hr:
+    z1: [0, 85]
+    z2: [85, 89]
+    z3: [90, 94]
+    z4: [95, 99]
+    z5a: [100, 102]
+    z5b: [103, 106]
+    z5c: [107, 200]
+
+prs:
+  # Populate as you re-establish references.
+  5k_run: # "18:45"
+  10k_run:
+  half_marathon:
+  marathon:
+  20min_power:
+  ftp_bike:
+  half_ironman: # goal: sub-1:45 half is listed; note this is run PR, not IM 70.3
+  full_ironman:
+
+strengths: []   # e.g., ["long-duration aerobic", "bike pacing discipline"]
+limiters: []    # e.g., ["run durability at volume", "threshold run capacity"]
