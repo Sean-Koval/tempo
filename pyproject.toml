@@ -13,6 +13,8 @@ dependencies = [
     "python-dateutil>=2.9.0",
     "python-dotenv>=1.1.1",
     "intervals-icu-mcp",
+    "lancedb>=0.15",
+    "fastembed>=0.4",
 ]
 
 [project.scripts]
