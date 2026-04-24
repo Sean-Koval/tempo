@@ -150,6 +150,77 @@ def push_week_cmd(
     )
 
 
+@app.command("check-in")
+def check_in_cmd(
+    for_date: str = typer.Option(
+        "",
+        "--date",
+        help="ISO date to log against. Defaults to today.",
+    ),
+    no_push: bool = typer.Option(
+        False,
+        "--no-push",
+        help="Skip the intervals.icu push. DB write still happens.",
+    ),
+) -> None:
+    """Morning wellness capture: sleep, HRV, RHR, readiness, notes.
+
+    Writes to ``coach.db.wellness_daily`` and pushes to intervals.icu
+    (unless ``--no-push``). Re-running on the same day upserts.
+    """
+    from datetime import date as _date
+
+    from .check_in import CheckInInput, check_in
+
+    iso_date = for_date or _date.today().isoformat()
+    console.print(f"[bold]Check-in[/bold] — {iso_date}")
+    console.print(
+        "[dim]Leave optional fields blank to skip. Sleep hours and readiness are required.[/dim]"
+    )
+
+    sleep_h = typer.prompt("Sleep hours", type=float)
+    sleep_score_raw = typer.prompt(
+        "Sleep score (0–100, blank to skip)", default="", show_default=False
+    )
+    hrv_raw = typer.prompt("HRV ms (blank to skip)", default="", show_default=False)
+    rhr_raw = typer.prompt(
+        "Resting HR bpm (blank to skip)", default="", show_default=False
+    )
+    readiness = typer.prompt("Readiness (1–10)", type=int)
+    soreness = typer.prompt("Soreness (free text, blank to skip)", default="", show_default=False)
+    notes = typer.prompt("Notes (blank to skip)", default="", show_default=False)
+
+    data = CheckInInput(
+        for_date=iso_date,
+        sleep_h=sleep_h,
+        sleep_score=int(sleep_score_raw) if sleep_score_raw.strip() else None,
+        hrv=float(hrv_raw) if hrv_raw.strip() else None,
+        rhr=int(rhr_raw) if rhr_raw.strip() else None,
+        readiness=readiness,
+        soreness=soreness.strip() or None,
+        notes=notes.strip() or None,
+    )
+
+    result = check_in(data, push=not no_push)
+
+    bits = [f"sleep {sleep_h:.1f}h"]
+    if data.hrv is not None:
+        bits.append(f"HRV {data.hrv:.0f}")
+    if data.rhr is not None:
+        bits.append(f"RHR {data.rhr}")
+    bits.append(f"readiness {readiness}")
+    console.print(f"[green]logged[/green] {iso_date}: {' · '.join(bits)}")
+
+    if result.intervals_pushed:
+        console.print("[dim]  pushed to intervals.icu[/dim]")
+    elif no_push:
+        console.print("[dim]  intervals push skipped (--no-push)[/dim]")
+    else:
+        console.print(
+            f"[yellow]  intervals push failed:[/yellow] {result.intervals_error}"
+        )
+
+
 @vectors_app.command("rebuild")
 def vectors_rebuild_cmd(
     force: bool = typer.Option(False, "--force", help="Re-embed even if file hash matches."),
