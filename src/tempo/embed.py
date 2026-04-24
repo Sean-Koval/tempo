@@ -20,17 +20,19 @@ from __future__ import annotations
 
 import hashlib
 import re
+from collections.abc import Callable, Iterable
 from dataclasses import dataclass, field
 from pathlib import Path
 from time import perf_counter
-from typing import Iterable
+from typing import Any
 
 import lancedb
 import pyarrow as pa
 import yaml
-from fastembed import TextEmbedding
 
 from .paths import data_dir, repo_root
+
+Embedder = Callable[[list[str]], list[list[float]]]
 
 _EMBED_MODEL = "BAAI/bge-small-en-v1.5"
 _EMBED_DIM = 384
@@ -198,15 +200,23 @@ def _schema() -> pa.Schema:
     )
 
 
-def _open_table(vectors_dir: Path) -> lancedb.table.LanceTable:
+def _list_table_names(db: lancedb.DBConnection) -> list[str]:
+    """LanceDB 0.30's ``list_tables`` returns a response wrapper, not a list."""
+    result: Any = db.list_tables()
+    if hasattr(result, "tables"):
+        return [str(x) for x in result.tables]
+    return [str(x) for x in result]
+
+
+def _open_table(vectors_dir: Path) -> Any:
     vectors_dir.mkdir(parents=True, exist_ok=True)
     db = lancedb.connect(str(vectors_dir))
-    if _TABLE_NAME in db.table_names():
+    if _TABLE_NAME in _list_table_names(db):
         return db.open_table(_TABLE_NAME)
     return db.create_table(_TABLE_NAME, schema=_schema())
 
 
-def _existing_hashes(table: lancedb.table.LanceTable) -> dict[str, str]:
+def _existing_hashes(table: Any) -> dict[str, str]:
     """Return {path: file_hash} — one entry per indexed file (any chunk)."""
     if table.count_rows() == 0:
         return {}
@@ -217,19 +227,27 @@ def _existing_hashes(table: lancedb.table.LanceTable) -> dict[str, str]:
     return out
 
 
-def _model() -> TextEmbedding:
-    return TextEmbedding(model_name=_EMBED_MODEL)
+def _default_embedder() -> Embedder:
+    """Lazy-loaded fastembed BGE-small embedder. Downloads on first call."""
+    from fastembed import TextEmbedding
+
+    model = TextEmbedding(model_name=_EMBED_MODEL)
+
+    def _embed(texts: list[str]) -> list[list[float]]:
+        return [vec.tolist() for vec in model.embed(texts)]
+
+    return _embed
 
 
-def _chunks_to_rows(chunks: list[Chunk], model: TextEmbedding) -> list[dict]:
+def _chunks_to_rows(chunks: list[Chunk], embedder: Embedder) -> list[dict]:
     if not chunks:
         return []
-    vectors = list(model.embed([c.text for c in chunks]))
+    vectors = embedder([c.text for c in chunks])
     return [
         {
             "id": c.id,
             "text": c.text,
-            "vector": vec.tolist(),
+            "vector": vec,
             "path": c.path,
             "topic": c.topic,
             "credibility": c.credibility,
@@ -257,11 +275,14 @@ def rebuild(
     vectors_dir: Path | None = None,
     paths: list[Path] | None = None,
     force: bool = False,
+    embedder: Embedder | None = None,
 ) -> EmbedStats:
     """(Re)embed knowledge docs into ``knowledge.lance``.
 
     - ``paths``: limit to specific .md files (post-commit hook path).
     - ``force``: re-embed even if file hash matches.
+    - ``embedder``: optional callable ``[str] -> [[float]]`` for tests /
+      custom embedding backends. Defaults to fastembed BGE-small.
     """
     t0 = perf_counter()
     root = repo_root()
@@ -274,13 +295,15 @@ def rebuild(
 
     stats = EmbedStats()
     files_to_embed: list[tuple[Path, list[Chunk]]] = []
+    rel_base = kroot.parent.resolve()
 
     for md in _iter_targets(kroot, paths):
         stats.files_scanned += 1
+        md_res = md.resolve()
         try:
-            rel = md.relative_to(root).as_posix()
+            rel = md_res.relative_to(rel_base).as_posix()
         except ValueError:
-            rel = md.as_posix()
+            rel = md_res.as_posix()
         fh = _file_hash(md)
         if not force and existing.get(rel) == fh:
             stats.files_skipped += 1
@@ -294,14 +317,14 @@ def rebuild(
         stats.duration_ms = int((perf_counter() - t0) * 1000)
         return stats
 
-    model = _model()
-    for md, chunks in files_to_embed:
+    embed_fn = embedder or _default_embedder()
+    for _md, chunks in files_to_embed:
         rel = chunks[0].path
         if rel in existing:
             deleted = table.count_rows(f"path = '{_sql_quote(rel)}'")
             table.delete(f"path = '{_sql_quote(rel)}'")
             stats.chunks_deleted += deleted
-        rows = _chunks_to_rows(chunks, model)
+        rows = _chunks_to_rows(chunks, embed_fn)
         table.add(rows)
         stats.files_embedded += 1
         stats.chunks_written += len(rows)
@@ -322,6 +345,7 @@ def search(
     topic: str | None = None,
     credibility_min: str | None = None,
     vectors_dir: Path | None = None,
+    embedder: Embedder | None = None,
 ) -> list[SearchHit]:
     """Semantic search against knowledge.lance.
 
@@ -330,14 +354,14 @@ def search(
     """
     vdir = vectors_dir or (data_dir() / "vectors")
     db = lancedb.connect(str(vdir))
-    if _TABLE_NAME not in db.table_names():
+    if _TABLE_NAME not in _list_table_names(db):
         return []
     table = db.open_table(_TABLE_NAME)
     if table.count_rows() == 0:
         return []
 
-    model = _model()
-    qvec = list(model.embed([query]))[0].tolist()
+    embed_fn = embedder or _default_embedder()
+    qvec = embed_fn([query])[0]
 
     q = table.search(qvec).limit(k * 4 if topic or credibility_min else k)
     if topic:

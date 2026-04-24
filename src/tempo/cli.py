@@ -245,10 +245,10 @@ def _print_active_injuries() -> None:
 @vectors_app.command("rebuild")
 def vectors_rebuild_cmd(
     force: bool = typer.Option(False, "--force", help="Re-embed even if file hash matches."),
-    path: list[str] = typer.Option(
-        None,
-        "--path",
-        help="Limit to specific .md files (repeatable). Default: all of knowledge/.",
+    paths: str = typer.Option(
+        "",
+        "--paths",
+        help="Comma-separated .md files to limit the rebuild to. Default: all of knowledge/.",
     ),
 ) -> None:
     """Embed knowledge/ into data/vectors/knowledge.lance."""
@@ -257,7 +257,7 @@ def vectors_rebuild_cmd(
     from .embed import rebuild
 
     console.print("[bold]Vectors[/bold] — embedding knowledge/…")
-    targets = [_Path(p) for p in path] if path else None
+    targets = [_Path(p.strip()) for p in paths.split(",") if p.strip()] or None
     try:
         stats = rebuild(paths=targets, force=force)
     except Exception as e:
