@@ -277,6 +277,30 @@ def vectors_rebuild_cmd(
             console.print(f"  [dim]•[/dim] {p}")
 
 
+@vectors_app.command("rebuild-memory")
+def vectors_rebuild_memory_cmd(
+    force: bool = typer.Option(False, "--force", help="Re-embed even if entry hash matches."),
+) -> None:
+    """Embed decisions + journals + plan changelogs into data/vectors/memory.lance."""
+    from .embed import rebuild_memory
+
+    console.print("[bold]Memory[/bold] — embedding decisions / journals / changelogs…")
+    try:
+        stats = rebuild_memory(force=force)
+    except Exception as e:
+        console.print(f"[red]rebuild failed:[/red] {e}")
+        raise typer.Exit(code=1) from e
+
+    console.print(
+        f"  sources: [green]{stats.sources_scanned}[/green] scanned • "
+        f"embedded: [green]{stats.sources_embedded}[/green] • "
+        f"skipped: {stats.sources_skipped} • "
+        f"rows: [green]{stats.rows_written}[/green] "
+        f"(deleted {stats.rows_deleted}) • "
+        f"{stats.duration_ms}ms"
+    )
+
+
 @vectors_app.command("search")
 def vectors_search_cmd(
     query: str = typer.Argument(..., help="Natural-language query."),
