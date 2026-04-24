@@ -2,9 +2,9 @@
 
 # Tempo
 
-### A local-first coaching agent for the long build.
+### An AI coach that plans your training, tracks every session, and remembers why.
 
-*Six months of training. One athlete. Every decision reasoned and remembered.*
+*Full-stack endurance coaching — periodization, weekly adjustments, and the reasoning behind each one, in a local-first repo you own.*
 
 [![Python](https://img.shields.io/badge/python-3.11%2B-3776ab?logo=python&logoColor=white)](https://www.python.org/)
 [![Built with Claude Code](https://img.shields.io/badge/built%20with-Claude%20Code-cc785c)](https://docs.claude.com/en/docs/claude-code)
@@ -46,18 +46,42 @@ Four substrates, each doing what it's best at. None of them pretends to do anoth
 | Audit | **JSONL** `data/raw/` | every API response, gzipped weekly | makes the DB disposable; every derivation traceable |
 
 ```mermaid
-flowchart LR
-    A[intervals.icu] -->|MCP read| B[Agent]
-    B -->|MCP write\nexplicit only| A
-    C[knowledge/] -->|embed on commit| D[(knowledge.lance)]
-    E[journal/ + plans/] -->|nightly embed| F[(memory.lance)]
-    G[data/raw/*.jsonl] -->|derive| H[(coach.db)]
-    B <-->|typed tools| I[coach-db MCP]
-    I --> D
-    I --> F
-    I --> H
-    B <--> J[strava MCP]
+flowchart TB
+    User(["You"]) <-->|conversation| Agent["Claude Code<br/>(coaching agent)"]
+
+    Agent <-->|MCP| Intervals["intervals<br/>MCP"]
+    Agent <-->|MCP| CoachDB["coach-db<br/>MCP"]
+    Agent <-->|MCP| Strava["strava<br/>MCP"]
+
+    Intervals <-->|read / explicit write| ICU[(intervals.icu)]
+    Strava <-->|read| StravaAPI[(Strava)]
+
+    CoachDB --> SQL[(coach.db<br/>activities · wellness · load · decisions)]
+    CoachDB --> Vec[(LanceDB<br/>knowledge · memory · sessions)]
+
+    ICU -.->|coach sync| Raw["data/raw/<br/>JSONL audit"]
+    Raw -.->|derive| SQL
+    Plans["plans/ (markdown)"] -.-> SQL
+
+    Knowledge["knowledge/<br/>(markdown)"] -.->|embed on commit| Vec
+    Memory["journal/ + changelogs<br/>+ decisions table"] -.->|nightly embed| Vec
+
+    classDef user fill:#22c55e,stroke:#16a34a,color:#fff
+    classDef agent fill:#cc785c,stroke:#a6573e,color:#fff
+    classDef mcp fill:#6e56cf,stroke:#4f3cc0,color:#fff
+    classDef external fill:#0a66c2,stroke:#074a8f,color:#fff
+    classDef store fill:#1f2937,stroke:#374151,color:#fff
+    classDef source fill:#f3f4f6,stroke:#9ca3af,color:#111
+
+    class User user
+    class Agent agent
+    class Intervals,CoachDB,Strava mcp
+    class ICU,StravaAPI external
+    class SQL,Vec store
+    class Raw,Plans,Knowledge,Memory source
 ```
+
+*You drive every conversation. The agent reads state through typed MCP tools and only writes to intervals.icu when you explicitly run `coach push-week`.*
 
 **MCP servers wired** (see `.claude/settings.json`):
 
