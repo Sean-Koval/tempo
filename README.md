@@ -21,7 +21,7 @@ Design doc / authoritative spec: [`take-this-project-and-temporal-tarjan.md`](/h
 | LanceDB (`data/vectors/`) | knowledge, memory, session library | semantic retrieval where structure doesn't cut it |
 | JSONL (`data/raw/`) | every API response, gzipped weekly | audit trail; makes the DB rebuildable |
 
-MCP servers wired in: **intervals** (forked from eddmann/intervals-icu-mcp), **strava** (Phase 3), **coach-db** (built here, Phase 3).
+MCP servers wired in: **intervals** (forked from eddmann/intervals-icu-mcp), **coach-db** (built here — typed surface over `coach.db` + LanceDB), **strava** (r-huijts upstream).
 
 ## Quickstart
 
@@ -70,10 +70,10 @@ scripts/       Deterministic scripts (sync, derive, embed, coach CLI)
 
 ## Build phases
 
-- **Phase 0** (you are here) — scaffold, intervals MCP wired, athlete+knowledge stubs. Conversational planning works.
+- **Phase 0** — scaffold, intervals MCP wired, athlete+knowledge stubs. Conversational planning works.
 - **Phase 1** — SQLite schema + `coach sync`/`coach status`. Fast local queries.
 - **Phase 2** — LanceDB + knowledge corpus + auto-embed on commit.
-- **Phase 3** — `coach-db` MCP server. Typed tool surface over SQLite + LanceDB. Strava wired.
+- **Phase 3** (you are here) — `coach-db` MCP server: `query_activities`, `get_load_curve`, `get_readiness`, `get_adherence`, `compare_plan_to_actual`, `search_knowledge`, `search_memory`, `find_similar_session`, `log_decision`. Strava wired (r-huijts).
 - **Phase 4** — `bootstrap-plan`, `plan-training-week`, `review-week`, `morning-check-in` Skills. Full coaching loop.
 - **Phase 5** — Dashboards (week / macro / decisions).
 - **Phase 6** — `ingest-research`, `draft-race-plan`, nutrition deep-dive.

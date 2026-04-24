@@ -13,17 +13,6 @@
         "INTERVALS_ICU_ATHLETE_ID": "${INTERVALS_ICU_ATHLETE_ID}",
         "INTERVALS_ICU_API_KEY": "${INTERVALS_ICU_API_KEY}"
       }
-    }
-  },
-  "_disabledMcpServers_phase3": {
-    "strava": {
-      "command": "npx",
-      "args": ["-y", "@r-huijts/strava-mcp-server"],
-      "env": {
-        "STRAVA_CLIENT_ID": "${STRAVA_CLIENT_ID}",
-        "STRAVA_CLIENT_SECRET": "${STRAVA_CLIENT_SECRET}",
-        "STRAVA_REFRESH_TOKEN": "${STRAVA_REFRESH_TOKEN}"
-      }
     },
     "coach-db": {
       "command": "uv",
@@ -33,6 +22,15 @@
         "./mcp-servers/coach-db",
         "coach-db-mcp"
       ]
+    },
+    "strava": {
+      "command": "npx",
+      "args": ["-y", "@r-huijts/strava-mcp-server"],
+      "env": {
+        "STRAVA_CLIENT_ID": "${STRAVA_CLIENT_ID}",
+        "STRAVA_CLIENT_SECRET": "${STRAVA_CLIENT_SECRET}",
+        "STRAVA_REFRESH_TOKEN": "${STRAVA_REFRESH_TOKEN}"
+      }
     }
   },
   "permissions": {
