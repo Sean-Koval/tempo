@@ -143,3 +143,153 @@ def test_bootstrap_brief_existing_plan_flag(
 
     brief = briefs.bootstrap_plan_brief("2026-im-lake-placid")
     assert brief["existing_plan"] is True
+
+
+# --- plan_week_brief --------------------------------------------------------
+
+_PLAN_WITH_PHASES = """\
+plan_id: 2026-im-lake-placid
+goal_ref: 2026-im-lake-placid
+template: ironman_full_24wk
+start_date: 2026-03-02
+target_date: 2026-07-26
+total_weeks: 24
+phases:
+  - id: base
+    start_week: 2026-W10
+    weeks: 4
+    weekly_tss_target: [350, 450]
+    intensity_distribution: { z1_z2: 85, z3: 10, z4_plus: 5 }
+    key_sessions: [long_ride_z2, long_run_z2]
+  - id: build
+    start_week: 2026-W14
+    weeks: 6
+    weekly_tss_target: [600, 750]
+    intensity_distribution: { z1_z2: 75, z3: 15, z4_plus: 10 }
+    key_sessions: [race_pace_bike, threshold_run]
+"""
+
+
+def _seed_week_plan(tmp_path: Path) -> None:
+    """Seed athlete/ + a single plan with phases for plan_week_brief tests."""
+    _seed_repo(tmp_path, race=True)
+    plan_dir = tmp_path / "plans" / "2026-im-lake-placid"
+    plan_dir.mkdir(parents=True)
+    (plan_dir / "plan.yaml").write_text(_PLAN_WITH_PHASES, encoding="utf-8")
+
+
+def test_plan_week_brief_resolves_single_plan_and_phase(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    _seed_week_plan(tmp_path)
+    _patch_roots(monkeypatch, tmp_path)
+
+    brief = briefs.plan_week_brief(week_id="2026-W15")
+    assert brief["week_id"] == "2026-W15"
+    assert brief["week_start"] == "2026-04-06"
+    assert brief["week_end"] == "2026-04-12"
+    assert brief["plan"]["plan_id"] == "2026-im-lake-placid"
+    assert brief["plan"]["phase"]["id"] == "build"
+    assert brief["plan"]["week_of_phase"] == 2
+    assert brief["plan"]["weeks_remaining_in_phase"] == 4
+    assert brief["plan"]["weekly_tss_target_mid"] == 675
+
+
+def test_plan_week_brief_default_week_is_one_week_forward(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    _seed_week_plan(tmp_path)
+    _patch_roots(monkeypatch, tmp_path)
+
+    from datetime import date, timedelta
+
+    from tempo.plans import week_id_for
+
+    expected = week_id_for(date.today() + timedelta(days=7))
+    brief = briefs.plan_week_brief()
+    assert brief["week_id"] == expected
+
+
+def test_plan_week_brief_no_plan_raises(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    _seed_repo(tmp_path, race=True)  # no plans/ dir seeded
+    _patch_roots(monkeypatch, tmp_path)
+
+    with pytest.raises(briefs.NoActivePlanError):
+        briefs.plan_week_brief(week_id="2026-W15")
+
+
+def test_plan_week_brief_multiple_plans_raises(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    _seed_week_plan(tmp_path)
+    # Second plan under plans/
+    other = tmp_path / "plans" / "2027-other"
+    other.mkdir(parents=True)
+    (other / "plan.yaml").write_text("plan_id: 2027-other\n", encoding="utf-8")
+    _patch_roots(monkeypatch, tmp_path)
+
+    from tempo.plans import MultiplePlansError
+
+    with pytest.raises(MultiplePlansError):
+        briefs.plan_week_brief(week_id="2026-W15")
+
+
+def test_plan_week_brief_explicit_plan_id_bypasses_autodetect(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    _seed_week_plan(tmp_path)
+    # Ambiguous plans/ on purpose — explicit plan_id resolves it.
+    other = tmp_path / "plans" / "2027-other"
+    other.mkdir(parents=True)
+    (other / "plan.yaml").write_text("plan_id: 2027-other\n", encoding="utf-8")
+    _patch_roots(monkeypatch, tmp_path)
+
+    brief = briefs.plan_week_brief(
+        week_id="2026-W15", plan_id="2026-im-lake-placid"
+    )
+    assert brief["plan"]["plan_id"] == "2026-im-lake-placid"
+
+
+def test_plan_week_brief_week_outside_any_phase(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    _seed_week_plan(tmp_path)
+    _patch_roots(monkeypatch, tmp_path)
+
+    brief = briefs.plan_week_brief(week_id="2026-W05")  # before base starts
+    assert brief["plan"]["phase"] is None
+    assert brief["plan"]["week_of_phase"] is None
+    assert brief["plan"]["weekly_tss_target_mid"] is None
+
+
+def test_plan_week_brief_flags_existing_week_file(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    _seed_week_plan(tmp_path)
+    weeks = tmp_path / "plans" / "2026-im-lake-placid" / "weeks"
+    weeks.mkdir(parents=True)
+    (weeks / "2026-W15.md").write_text("# drafted\n", encoding="utf-8")
+    _patch_roots(monkeypatch, tmp_path)
+
+    brief = briefs.plan_week_brief(week_id="2026-W15")
+    assert brief["week_already_drafted"] is True
+
+
+def test_plan_week_brief_surfaces_active_injuries(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    _seed_week_plan(tmp_path)
+    (tmp_path / "athlete" / "injury-log.md").write_text(
+        "# Log\n\n## Active\n\n"
+        "### 2026-04-15 — calf strain — 3\n"
+        "- Status: active\n- Constraints: no >Z3 run\n\n"
+        "## Resolved\n",
+        encoding="utf-8",
+    )
+    _patch_roots(monkeypatch, tmp_path)
+
+    brief = briefs.plan_week_brief(week_id="2026-W15")
+    assert len(brief["active_injuries"]) == 1
+    assert "calf strain" in brief["active_injuries"][0]
