@@ -1,16 +1,18 @@
 <div align="center">
 
-# Tempo
+<img src="docs/tempo-banner.svg" alt="Tempo — AI endurance coaching" width="100%">
 
-### An AI coach that plans your training, tracks every session, and remembers why.
+<p>
+  <em>Full-stack endurance coaching — periodization, weekly adjustments, and the reasoning behind each one, in a local-first repo you own.</em>
+</p>
 
-*Full-stack endurance coaching — periodization, weekly adjustments, and the reasoning behind each one, in a local-first repo you own.*
-
-[![Python](https://img.shields.io/badge/python-3.11%2B-3776ab?logo=python&logoColor=white)](https://www.python.org/)
-[![Built with Claude Code](https://img.shields.io/badge/built%20with-Claude%20Code-cc785c)](https://docs.claude.com/en/docs/claude-code)
-[![intervals.icu](https://img.shields.io/badge/data-intervals.icu-0a66c2)](https://intervals.icu)
-[![MCP](https://img.shields.io/badge/protocol-MCP-6e56cf)](https://modelcontextprotocol.io)
-[![Status](https://img.shields.io/badge/phase-3%20shipped-22c55e)](#build-phases)
+<p>
+  <a href="https://www.python.org/"><img alt="Python 3.11+" src="https://img.shields.io/badge/python-3.11%2B-3776ab?logo=python&logoColor=white"></a>
+  <a href="https://docs.claude.com/en/docs/claude-code"><img alt="Built with Claude Code" src="https://img.shields.io/badge/built%20with-Claude%20Code-cc785c"></a>
+  <a href="https://intervals.icu"><img alt="intervals.icu" src="https://img.shields.io/badge/data-intervals.icu-0a66c2"></a>
+  <a href="https://modelcontextprotocol.io"><img alt="MCP protocol" src="https://img.shields.io/badge/protocol-MCP-6e56cf"></a>
+  <a href="#build-phases"><img alt="Phase 3 shipped" src="https://img.shields.io/badge/phase-3%20shipped-22c55e"></a>
+</p>
 
 </div>
 

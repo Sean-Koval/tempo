@@ -1,0 +1,106 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1400 360" role="img" aria-label="Tempo — an AI coach that plans, tracks, and remembers why">
+  <title>Tempo</title>
+  <defs>
+    <linearGradient id="bgFade" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0%" stop-color="#0B1220"/>
+      <stop offset="100%" stop-color="#070C16"/>
+    </linearGradient>
+    <linearGradient id="traceGradient" x1="0" y1="0" x2="1" y2="0">
+      <stop offset="0%" stop-color="#06B6D4" stop-opacity="0"/>
+      <stop offset="12%" stop-color="#06B6D4" stop-opacity="0.85"/>
+      <stop offset="50%" stop-color="#A855F7" stop-opacity="0.95"/>
+      <stop offset="85%" stop-color="#F97316" stop-opacity="1"/>
+      <stop offset="100%" stop-color="#F97316" stop-opacity="0"/>
+    </linearGradient>
+    <linearGradient id="wordmarkFade" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0%" stop-color="#FFFFFF"/>
+      <stop offset="100%" stop-color="#CBD5E1"/>
+    </linearGradient>
+    <radialGradient id="glow" cx="50%" cy="50%" r="50%">
+      <stop offset="0%" stop-color="#F97316" stop-opacity="0.22"/>
+      <stop offset="100%" stop-color="#F97316" stop-opacity="0"/>
+    </radialGradient>
+  </defs>
+
+  <!-- Background -->
+  <rect width="1400" height="360" fill="url(#bgFade)"/>
+
+  <!-- Warm glow beneath the wordmark -->
+  <ellipse cx="700" cy="220" rx="480" ry="140" fill="url(#glow)"/>
+
+  <!-- Faint baseline grid — topographic feel -->
+  <g stroke="#1E293B" stroke-width="1" opacity="0.5">
+    <line x1="0" y1="80" x2="1400" y2="80"/>
+    <line x1="0" y1="140" x2="1400" y2="140"/>
+    <line x1="0" y1="200" x2="1400" y2="200"/>
+    <line x1="0" y1="260" x2="1400" y2="260"/>
+    <line x1="0" y1="320" x2="1400" y2="320"/>
+  </g>
+
+  <!-- Tick marks along bottom axis — like a timeline -->
+  <g stroke="#334155" stroke-width="1" opacity="0.55">
+    <line x1="100" y1="336" x2="100" y2="342"/>
+    <line x1="300" y1="336" x2="300" y2="342"/>
+    <line x1="500" y1="336" x2="500" y2="342"/>
+    <line x1="700" y1="336" x2="700" y2="342"/>
+    <line x1="900" y1="336" x2="900" y2="342"/>
+    <line x1="1100" y1="336" x2="1100" y2="342"/>
+    <line x1="1300" y1="336" x2="1300" y2="342"/>
+  </g>
+
+  <!-- Kicker -->
+  <text x="700" y="82" fill="#F97316"
+        font-family="'Inter','Segoe UI',system-ui,-apple-system,Roboto,Arial,sans-serif"
+        font-size="13" font-weight="600" letter-spacing="8" text-anchor="middle">
+    AI ENDURANCE COACHING
+  </text>
+
+  <!-- Wordmark -->
+  <text x="700" y="200" fill="url(#wordmarkFade)"
+        font-family="'Inter','Segoe UI',system-ui,-apple-system,Roboto,Arial,sans-serif"
+        font-size="132" font-weight="800" letter-spacing="14" text-anchor="middle">
+    TEMPO
+  </text>
+
+  <!-- Tagline -->
+  <text x="700" y="245" fill="#94A3B8"
+        font-family="'Inter','Segoe UI',system-ui,-apple-system,Roboto,Arial,sans-serif"
+        font-size="18" font-weight="400" letter-spacing="2" text-anchor="middle">
+    Plan · Track · Remember why
+  </text>
+
+  <!-- HR trace — a classic interval ride: warm-up → 4 threshold efforts → cool-down -->
+  <path
+    d="M 20 310
+       C 100 310, 140 305, 180 302
+       C 220 298, 260 295, 300 293
+       L 340 293
+       L 355 252
+       L 395 252
+       L 410 293
+       C 460 293, 490 295, 530 294
+       L 560 258
+       L 600 258
+       L 615 294
+       C 660 295, 700 293, 740 292
+       L 770 260
+       L 810 260
+       L 825 294
+       C 880 296, 920 294, 960 292
+       L 995 256
+       L 1035 256
+       L 1050 293
+       C 1110 296, 1180 300, 1250 305
+       C 1300 308, 1350 310, 1380 310"
+    fill="none"
+    stroke="url(#traceGradient)"
+    stroke-width="3"
+    stroke-linecap="round"
+    stroke-linejoin="round"/>
+
+  <!-- Small heart-dot pulse on the last peak — signature detail -->
+  <circle cx="1015" cy="256" r="4" fill="#F97316">
+    <animate attributeName="r" values="4;6;4" dur="1.4s" repeatCount="indefinite"/>
+    <animate attributeName="fill-opacity" values="1;0.6;1" dur="1.4s" repeatCount="indefinite"/>
+  </circle>
+</svg>
