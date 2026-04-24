@@ -77,6 +77,17 @@ class AdherenceReport(BaseModel):
     items: list[AdherenceItem]
 
 
+class Snippet(BaseModel):
+    id: str
+    text: str
+    path: str
+    topic: str = ""
+    credibility: str = "unvetted"
+    source_ids: list[str] = Field(default_factory=list)
+    phase: str = ""
+    score: float = 0.0
+
+
 class Delta(BaseModel):
     planned_session_id: str
     date: str | None = None

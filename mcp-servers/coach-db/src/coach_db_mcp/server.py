@@ -13,13 +13,14 @@ from typing import Any
 from fastmcp import FastMCP
 from tempo.db import connect, init_schema
 
-from . import sql
+from . import knowledge, sql
 from .models import (
     ActivityOut,
     AdherenceReport,
     Delta,
     LoadPoint,
     ReadinessSnapshot,
+    Snippet,
 )
 
 mcp: FastMCP = FastMCP(
@@ -107,6 +108,24 @@ def compare_plan_to_actual(week_id: str) -> list[Delta]:
     """Per-session deltas for a week. Raw numbers — the agent applies decision-rules."""
     with _db() as conn:
         return sql.compare_plan_to_actual(conn, week_id=week_id)
+
+
+@mcp.tool
+def search_knowledge(
+    query: str,
+    k: int = 5,
+    topic: str | None = None,
+    credibility_min: str | None = None,
+) -> list[Snippet]:
+    """Semantic search over knowledge.lance (methodology + nutrition + research).
+
+    ``credibility_min`` drops hits weaker than the given level. Levels ranked
+    strongest→weakest: peer_reviewed, expert_practitioner,
+    evidence_based_journalism, experiential, unvetted.
+    """
+    return knowledge.search_knowledge(
+        query, k=k, topic=topic, credibility_min=credibility_min
+    )
 
 
 def main() -> None:
