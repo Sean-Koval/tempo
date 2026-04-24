@@ -277,6 +277,29 @@ def vectors_rebuild_cmd(
             console.print(f"  [dim]•[/dim] {p}")
 
 
+@vectors_app.command("rebuild-sessions")
+def vectors_rebuild_sessions_cmd(
+    force: bool = typer.Option(False, "--force", help="Re-embed even if file hash matches."),
+) -> None:
+    """Embed session-library.md into data/vectors/sessions.lance."""
+    from .embed import rebuild_sessions
+
+    console.print("[bold]Sessions[/bold] — embedding session-library.md…")
+    try:
+        stats = rebuild_sessions(force=force)
+    except Exception as e:
+        console.print(f"[red]rebuild failed:[/red] {e}")
+        raise typer.Exit(code=1) from e
+
+    console.print(
+        f"  entries: [green]{stats.entries_scanned}[/green] scanned • "
+        f"embedded: [green]{stats.entries_embedded}[/green] • "
+        f"skipped: {stats.entries_skipped} • "
+        f"deleted: {stats.rows_deleted} • "
+        f"{stats.duration_ms}ms"
+    )
+
+
 @vectors_app.command("rebuild-memory")
 def vectors_rebuild_memory_cmd(
     force: bool = typer.Option(False, "--force", help="Re-embed even if entry hash matches."),

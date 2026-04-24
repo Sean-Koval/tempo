@@ -39,8 +39,23 @@ _EMBED_MODEL = "BAAI/bge-small-en-v1.5"
 _EMBED_DIM = 384
 _TABLE_NAME = "knowledge"
 _MEMORY_TABLE_NAME = "memory"
+_SESSIONS_TABLE_NAME = "sessions"
 _CHUNK_WORDS = 500
 _CHUNK_OVERLAP_WORDS = 50
+
+_SPORT_SECTION_RE = re.compile(r"^##\s+(?P<heading>.+?)\s*$", re.MULTILINE)
+_SESSION_HEADING_RE = re.compile(r"^###\s+`(?P<id>[a-z0-9_]+)`\s*$", re.MULTILINE)
+_RANGE_RE = re.compile(r"(\d+(?:\.\d+)?)\s*[–-]\s*(\d+(?:\.\d+)?)")
+_SINGLE_NUM_RE = re.compile(r"(\d+(?:\.\d+)?)")
+_SPORT_CANONICAL = {
+    "swim": "swim",
+    "bike": "bike",
+    "ride": "bike",
+    "run": "run",
+    "brick & combined": "brick",
+    "brick": "brick",
+    "strength": "strength",
+}
 
 _CHANGELOG_ENTRY_RE = re.compile(r"^##\s+(.+)$", re.MULTILINE)
 _JOURNAL_DATE_RE = re.compile(r"^(\d{4}-\d{2}-\d{2})$")
@@ -128,6 +143,41 @@ class MemoryHit:
     kind: str
     timestamp: str
     file_path: str
+    score: float
+
+
+@dataclass(frozen=True)
+class SessionEntry:
+    id: str
+    text: str
+    sport: str
+    duration_min_lo: int | None
+    duration_min_hi: int | None
+    tss_lo: int | None
+    tss_hi: int | None
+    purpose: str
+    file_hash: str
+
+
+@dataclass
+class SessionEmbedStats:
+    entries_scanned: int = 0
+    entries_embedded: int = 0
+    entries_skipped: int = 0
+    rows_deleted: int = 0
+    duration_ms: int = 0
+
+
+@dataclass(frozen=True)
+class SessionMatch:
+    id: str
+    text: str
+    sport: str
+    purpose: str
+    duration_min_lo: int | None
+    duration_min_hi: int | None
+    tss_lo: int | None
+    tss_hi: int | None
     score: float
 
 
@@ -765,3 +815,230 @@ def embed_single_decision(
     )
     table.add([_memory_row_to_dict(row, vec)])
     return True
+
+
+# ---------------------------------------------------------------------------
+# sessions.lance — session library dedup / similar-session matching
+# ---------------------------------------------------------------------------
+
+
+def _sessions_schema() -> pa.Schema:
+    return pa.schema(
+        [
+            pa.field("id", pa.string()),
+            pa.field("text", pa.string()),
+            pa.field("vector", pa.list_(pa.float32(), _EMBED_DIM)),
+            pa.field("sport", pa.string()),
+            pa.field("purpose", pa.string()),
+            pa.field("duration_min_lo", pa.int32()),
+            pa.field("duration_min_hi", pa.int32()),
+            pa.field("tss_lo", pa.int32()),
+            pa.field("tss_hi", pa.int32()),
+            pa.field("file_hash", pa.string()),
+        ]
+    )
+
+
+def _open_sessions_table(vectors_dir: Path) -> Any:
+    vectors_dir.mkdir(parents=True, exist_ok=True)
+    db = lancedb.connect(str(vectors_dir))
+    if _SESSIONS_TABLE_NAME in _list_table_names(db):
+        return db.open_table(_SESSIONS_TABLE_NAME)
+    return db.create_table(_SESSIONS_TABLE_NAME, schema=_sessions_schema())
+
+
+def _parse_session_line_range(line: str) -> tuple[float | None, float | None]:
+    """Return (lo, hi) as floats. Caller converts units + int-rounds."""
+    m = _RANGE_RE.search(line)
+    if m:
+        return (float(m.group(1)), float(m.group(2)))
+    m1 = _SINGLE_NUM_RE.search(line)
+    if m1:
+        v = float(m1.group(1))
+        return (v, v)
+    return (None, None)
+
+
+def _parse_session_body(body: str) -> tuple[str, tuple[int | None, int | None], tuple[int | None, int | None]]:
+    """Return (purpose, duration_min_range, tss_range) from a session's bullets."""
+    purpose = ""
+    dur: tuple[int | None, int | None] = (None, None)
+    tss: tuple[int | None, int | None] = (None, None)
+    for raw in body.splitlines():
+        line = raw.strip()
+        low = line.lower()
+        if low.startswith("- **purpose:**"):
+            purpose = line.split(":**", 1)[-1].strip() if ":**" in line else line
+        elif low.startswith("- **duration:**"):
+            lo_f, hi_f = _parse_session_line_range(line)
+            multiplier = 60.0 if "hour" in low else 1.0
+            lo = int(round(lo_f * multiplier)) if lo_f is not None else None
+            hi = int(round(hi_f * multiplier)) if hi_f is not None else None
+            dur = (lo, hi)
+        elif low.startswith("- **tss:**"):
+            lo_f, hi_f = _parse_session_line_range(line)
+            lo = int(round(lo_f)) if lo_f is not None else None
+            hi = int(round(hi_f)) if hi_f is not None else None
+            tss = (lo, hi)
+    return purpose, dur, tss
+
+
+def _iter_session_entries(session_library: Path) -> Iterable[SessionEntry]:
+    if not session_library.is_file():
+        return
+    text = session_library.read_text(encoding="utf-8")
+    file_hash = _file_hash(session_library)
+
+    # Map position → sport by walking ## headings.
+    sport_spans: list[tuple[int, str]] = []  # (start_offset, canonical_sport)
+    for m in _SPORT_SECTION_RE.finditer(text):
+        heading = m.group("heading").strip().lower()
+        if heading in _SPORT_CANONICAL:
+            sport_spans.append((m.end(), _SPORT_CANONICAL[heading]))
+
+    def _sport_at(pos: int) -> str:
+        current = "unknown"
+        for start, sport in sport_spans:
+            if start <= pos:
+                current = sport
+            else:
+                break
+        return current
+
+    matches = list(_SESSION_HEADING_RE.finditer(text))
+    for idx, m in enumerate(matches):
+        lib_id = m.group("id")
+        start = m.end()
+        end = matches[idx + 1].start() if idx + 1 < len(matches) else len(text)
+        section_body = text[start:end].strip()
+        purpose, dur, tss = _parse_session_body(section_body)
+        sport = _sport_at(m.start())
+        embed_text = (
+            f"[{sport}] {lib_id}\n"
+            f"Purpose: {purpose}\n\n"
+            f"{section_body}"
+        )
+        yield SessionEntry(
+            id=lib_id,
+            text=embed_text,
+            sport=sport,
+            duration_min_lo=dur[0],
+            duration_min_hi=dur[1],
+            tss_lo=tss[0],
+            tss_hi=tss[1],
+            purpose=purpose,
+            file_hash=file_hash,
+        )
+
+
+def _session_entry_to_dict(e: SessionEntry, vec: list[float]) -> dict:
+    return {
+        "id": e.id,
+        "text": e.text,
+        "vector": vec,
+        "sport": e.sport,
+        "purpose": e.purpose,
+        "duration_min_lo": e.duration_min_lo if e.duration_min_lo is not None else -1,
+        "duration_min_hi": e.duration_min_hi if e.duration_min_hi is not None else -1,
+        "tss_lo": e.tss_lo if e.tss_lo is not None else -1,
+        "tss_hi": e.tss_hi if e.tss_hi is not None else -1,
+        "file_hash": e.file_hash,
+    }
+
+
+def rebuild_sessions(
+    session_library: Path | None = None,
+    vectors_dir: Path | None = None,
+    force: bool = False,
+    embedder: Embedder | None = None,
+) -> SessionEmbedStats:
+    """(Re)embed session-library.md into ``sessions.lance``.
+
+    Idempotency is per-file: the whole library shares one file_hash. Matching
+    hash → skip. Otherwise delete the table contents and re-insert.
+    """
+    t0 = perf_counter()
+    root = repo_root()
+    lib = session_library or (root / "knowledge" / "methodology" / "session-library.md")
+    vdir = vectors_dir or (data_dir() / "vectors")
+
+    table = _open_sessions_table(vdir)
+    entries = list(_iter_session_entries(lib))
+    stats = SessionEmbedStats(entries_scanned=len(entries))
+    if not entries:
+        stats.duration_ms = int((perf_counter() - t0) * 1000)
+        return stats
+
+    current_hash = entries[0].file_hash
+    if not force and table.count_rows() > 0:
+        existing_hash_row = table.to_arrow().select(["file_hash"]).to_pylist()
+        existing_hash = existing_hash_row[0]["file_hash"] if existing_hash_row else ""
+        if existing_hash == current_hash:
+            stats.entries_skipped = len(entries)
+            stats.duration_ms = int((perf_counter() - t0) * 1000)
+            return stats
+
+    if table.count_rows() > 0:
+        deleted = table.count_rows()
+        table.delete("file_hash IS NOT NULL")
+        stats.rows_deleted += deleted
+
+    embed_fn = embedder or _default_embedder()
+    vectors = embed_fn([e.text for e in entries])
+    rows = [_session_entry_to_dict(e, v) for e, v in zip(entries, vectors, strict=True)]
+    table.add(rows)
+    stats.entries_embedded = len(rows)
+    stats.duration_ms = int((perf_counter() - t0) * 1000)
+    return stats
+
+
+def search_sessions(
+    description: str,
+    k: int = 3,
+    sport: str | None = None,
+    vectors_dir: Path | None = None,
+    embedder: Embedder | None = None,
+) -> list[SessionMatch]:
+    """Semantic match against sessions.lance. ``sport`` is an exact filter."""
+    vdir = vectors_dir or (data_dir() / "vectors")
+    db = lancedb.connect(str(vdir))
+    if _SESSIONS_TABLE_NAME not in _list_table_names(db):
+        return []
+    table = db.open_table(_SESSIONS_TABLE_NAME)
+    if table.count_rows() == 0:
+        return []
+
+    embed_fn = embedder or _default_embedder()
+    qvec = embed_fn([description])[0]
+
+    q = table.search(qvec).limit(k * 4 if sport else k)
+    if sport:
+        q = q.where(f"sport = '{_sql_quote(sport)}'")
+    rows = q.to_list()
+
+    out: list[SessionMatch] = []
+    for r in rows:
+        dist = float(r.get("_distance", 0.0))
+        out.append(
+            SessionMatch(
+                id=str(r["id"]),
+                text=str(r["text"]),
+                sport=str(r.get("sport") or ""),
+                purpose=str(r.get("purpose") or ""),
+                duration_min_lo=_none_if_neg(r.get("duration_min_lo")),
+                duration_min_hi=_none_if_neg(r.get("duration_min_hi")),
+                tss_lo=_none_if_neg(r.get("tss_lo")),
+                tss_hi=_none_if_neg(r.get("tss_hi")),
+                score=1.0 - min(dist, 2.0) / 2.0,
+            )
+        )
+        if len(out) >= k:
+            break
+    return out
+
+
+def _none_if_neg(v: Any) -> int | None:
+    if v is None:
+        return None
+    iv = int(v)
+    return None if iv < 0 else iv
