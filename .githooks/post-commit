@@ -1,0 +1,26 @@
+#!/usr/bin/env bash
+# Auto-embed changed knowledge/ markdown into data/vectors/knowledge.lance.
+#
+# Runs after every commit. If any committed file matches knowledge/**/*.md,
+# we pass just those paths to `coach vectors rebuild --paths ...` so the
+# hook stays fast on large commits.
+#
+# Failures never block a commit — this hook only reports, it does not
+# re-raise. Enable with: git config core.hooksPath .githooks
+
+set -u
+
+# Files changed in the just-made commit (relative to repo root).
+changed=$(git diff-tree --no-commit-id --name-only --diff-filter=ACMR -r HEAD -- 'knowledge/**/*.md' 2>/dev/null | tr '\n' ',' | sed 's/,$//')
+
+if [ -z "$changed" ]; then
+    exit 0
+fi
+
+echo "[tempo] post-commit: re-embedding $(echo "$changed" | tr ',' '\n' | wc -l | tr -d ' ') knowledge file(s)"
+
+if ! uv run coach vectors rebuild --paths "$changed" 2>&1; then
+    echo "[tempo] post-commit: rebuild failed (non-fatal). Run 'coach vectors rebuild' manually."
+fi
+
+exit 0

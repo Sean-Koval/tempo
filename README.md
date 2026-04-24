@@ -48,6 +48,9 @@ $EDITOR athlete/goals.yaml
 
 # 6. open Claude Code in this directory and start planning
 #    — .claude/CLAUDE.md loads automatically and the intervals MCP is wired up
+
+# (optional) enable auto-embedding of knowledge/ changes on commit
+bash scripts/install-hooks.sh
 ```
 
 At this point you can have useful planning conversations with intervals data live. The deterministic CLI (`coach sync`, `coach status`), SQLite/LanceDB layers, Skills, and dashboards land in later phases — see the plan file.
