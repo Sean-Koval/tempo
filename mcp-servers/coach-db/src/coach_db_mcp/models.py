@@ -77,6 +77,18 @@ class AdherenceReport(BaseModel):
     items: list[AdherenceItem]
 
 
+class SessionMatch(BaseModel):
+    id: str
+    text: str
+    sport: str = ""
+    purpose: str = ""
+    duration_min_lo: int | None = None
+    duration_min_hi: int | None = None
+    tss_lo: int | None = None
+    tss_hi: int | None = None
+    score: float = 0.0
+
+
 class MemoryHit(BaseModel):
     id: str
     text: str

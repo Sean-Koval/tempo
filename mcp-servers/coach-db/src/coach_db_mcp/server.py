@@ -13,7 +13,7 @@ from typing import Any
 from fastmcp import FastMCP
 from tempo.db import connect, init_schema
 
-from . import knowledge, memory, sql
+from . import knowledge, memory, sessions, sql
 from .models import (
     ActivityOut,
     AdherenceReport,
@@ -22,6 +22,7 @@ from .models import (
     LoadPoint,
     MemoryHit,
     ReadinessSnapshot,
+    SessionMatch,
     Snippet,
 )
 
@@ -171,6 +172,20 @@ def search_knowledge(
     return knowledge.search_knowledge(
         query, k=k, topic=topic, credibility_min=credibility_min
     )
+
+
+@mcp.tool
+def find_similar_session(
+    description: str,
+    k: int = 3,
+    sport: str | None = None,
+) -> list[SessionMatch]:
+    """Find library sessions similar to a free-text description.
+
+    Call BEFORE inventing a new session — prefer an existing library_ref.
+    ``sport`` is an exact filter: 'swim' | 'bike' | 'run' | 'brick' | 'strength'.
+    """
+    return sessions.find_similar_session(description, k=k, sport=sport)
 
 
 def main() -> None:
