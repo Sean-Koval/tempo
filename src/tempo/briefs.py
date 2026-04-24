@@ -343,9 +343,146 @@ def plan_week_brief(
     }
 
 
+def _per_sport_tss(deltas: list[queries.DeltaRow]) -> dict[str, dict[str, float]]:
+    """Group planned/actual TSS totals by sport from a DeltaRow list."""
+    out: dict[str, dict[str, float]] = {}
+    for d in deltas:
+        sport = d.sport or "unknown"
+        bucket = out.setdefault(sport, {"planned": 0.0, "actual": 0.0})
+        bucket["planned"] += float(d.planned_tss or 0.0)
+        bucket["actual"] += float(d.actual_tss or 0.0)
+    return {s: {"planned": round(v["planned"], 1), "actual": round(v["actual"], 1)}
+            for s, v in out.items()}
+
+
+def _load_trajectory(points: list[dict[str, Any]]) -> dict[str, Any]:
+    """Extract start/end CTL, peak ATL, low TSB from a daily list."""
+    if not points:
+        return {"daily": [], "start_ctl": None, "end_ctl": None,
+                "peak_atl": None, "low_tsb": None}
+    ctls = [p["ctl"] for p in points if p.get("ctl") is not None]
+    atls = [p["atl"] for p in points if p.get("atl") is not None]
+    tsbs = [p["tsb"] for p in points if p.get("tsb") is not None]
+    return {
+        "daily": points,
+        "start_ctl": ctls[0] if ctls else None,
+        "end_ctl": ctls[-1] if ctls else None,
+        "peak_atl": max(atls) if atls else None,
+        "low_tsb": min(tsbs) if tsbs else None,
+    }
+
+
+def review_week_brief(
+    week_id: str | None = None,
+    *,
+    plan_id: str | None = None,
+) -> dict[str, Any]:
+    """Assemble the review-week brief for post-mortem on a completed week.
+
+    Args:
+        week_id: ISO week id. Defaults to the week that ended most recently
+            (i.e., last completed week relative to today).
+        plan_id: Explicit plan id. Defaults to auto-detection.
+
+    Raises:
+        NoActivePlanError: no plan.yaml found.
+        plans.MultiplePlansError: ambiguous auto-detection.
+    """
+    today = date.today()
+    if week_id is None:
+        week_id = plans.week_id_for(today - timedelta(days=7))
+
+    if plan_id is not None:
+        plan_doc = plans.read_plan_yaml(plan_id)
+        if plan_doc is None:
+            raise NoActivePlanError(f"plan {plan_id!r} not found under plans/")
+        resolved_plan_id = plan_id
+    else:
+        found = plans.find_single_plan()
+        if found is None:
+            raise NoActivePlanError(
+                "no plan found under plans/ — run /bootstrap-plan first"
+            )
+        resolved_plan_id, plan_doc = found
+
+    phase = plans.phase_for_week(plan_doc, week_id)
+    week_of_phase = plans.week_index_in_phase(phase, week_id) if phase else None
+    tss_target = _phase_tss_target(phase) if phase else None
+    target_mid = tss_target[2] if tss_target else None
+
+    w_start = plans.week_start(week_id).isoformat()
+    w_end = plans.week_end(week_id).isoformat()
+
+    adherence: dict[str, Any] = {"week_id": week_id, "planned_count": 0}
+    deltas_out: list[dict[str, Any]] = []
+    per_sport: dict[str, dict[str, float]] = {}
+    wellness_trend: list[dict[str, Any]] = []
+    load_traj: dict[str, Any] = {"daily": [], "start_ctl": None}
+    prior_weeks: list[dict[str, Any]] = []
+    db_error: str | None = None
+
+    try:
+        conn = connect()
+    except Exception as e:  # pragma: no cover — defensive
+        db_error = f"could not open coach.db: {e}"
+        conn = None
+
+    if conn is not None:
+        try:
+            init_schema(conn)
+            adherence = _adherence_summary(queries.get_adherence(conn, week_id=week_id))
+            deltas = queries.compare_plan_to_actual(conn, week_id=week_id)
+            deltas_out = [asdict(d) for d in deltas]
+            per_sport = _per_sport_tss(deltas)
+            wellness_trend = [
+                asdict(w)
+                for w in queries.get_wellness_range(
+                    conn, start_date=w_start, end_date=w_end
+                )
+            ]
+            daily_load = _load_curve_rows(conn, start=w_start, end=w_end)
+            load_traj = _load_trajectory(daily_load)
+            for wid in (
+                plans.shift_week(week_id, weeks=-1),
+                plans.shift_week(week_id, weeks=-2),
+            ):
+                rep = queries.get_adherence(conn, week_id=wid)
+                prior_weeks.append(
+                    {"week_id": wid, "completion_pct": rep.completion_pct,
+                     "planned_count": rep.planned_count}
+                )
+        finally:
+            conn.close()
+
+    week_file_exists = plans.week_file(resolved_plan_id, week_id).is_file()
+
+    return {
+        "week_id": week_id,
+        "week_start": w_start,
+        "week_end": w_end,
+        "today": today.isoformat(),
+        "plan": {
+            "plan_id": resolved_plan_id,
+            "phase": phase,
+            "week_of_phase": week_of_phase,
+            "weekly_tss_target_mid": target_mid,
+        },
+        "adherence": adherence,
+        "deltas": deltas_out,
+        "per_sport_tss": per_sport,
+        "wellness_trend": wellness_trend,
+        "load_trajectory": load_traj,
+        "prior_weeks_adherence": prior_weeks,
+        "active_injuries": athlete.active_injury_flags(),
+        "week_file_exists": week_file_exists,
+        "db_error": db_error,
+    }
+
+
 __all__ = [
     "NoActivePlanError",
     "UnknownGoalError",
     "bootstrap_plan_brief",
     "plan_week_brief",
+    "review_week_brief",
 ]

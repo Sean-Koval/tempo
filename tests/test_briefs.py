@@ -293,3 +293,135 @@ def test_plan_week_brief_surfaces_active_injuries(
     brief = briefs.plan_week_brief(week_id="2026-W15")
     assert len(brief["active_injuries"]) == 1
     assert "calf strain" in brief["active_injuries"][0]
+
+
+# --- review_week_brief -----------------------------------------------------
+
+def test_review_week_brief_resolves_phase_and_shape(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    _seed_week_plan(tmp_path)
+    _patch_roots(monkeypatch, tmp_path)
+
+    brief = briefs.review_week_brief(week_id="2026-W15")
+    assert brief["week_id"] == "2026-W15"
+    assert brief["week_start"] == "2026-04-06"
+    assert brief["week_end"] == "2026-04-12"
+    assert brief["plan"]["plan_id"] == "2026-im-lake-placid"
+    assert brief["plan"]["phase"]["id"] == "build"
+    assert brief["plan"]["weekly_tss_target_mid"] == 675
+    # DB empty but shape present.
+    assert brief["adherence"]["planned_count"] == 0
+    assert brief["deltas"] == []
+    assert brief["per_sport_tss"] == {}
+    assert brief["wellness_trend"] == []
+    assert brief["load_trajectory"]["daily"] == []
+    assert brief["load_trajectory"]["start_ctl"] is None
+    assert brief["week_file_exists"] is False
+
+
+def test_review_week_brief_defaults_to_last_completed_week(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    _seed_week_plan(tmp_path)
+    _patch_roots(monkeypatch, tmp_path)
+
+    from datetime import date, timedelta
+
+    from tempo.plans import week_id_for
+
+    expected = week_id_for(date.today() - timedelta(days=7))
+    brief = briefs.review_week_brief()
+    assert brief["week_id"] == expected
+
+
+def test_review_week_brief_no_plan_raises(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    _seed_repo(tmp_path, race=True)
+    _patch_roots(monkeypatch, tmp_path)
+
+    with pytest.raises(briefs.NoActivePlanError):
+        briefs.review_week_brief(week_id="2026-W15")
+
+
+def test_review_week_brief_flags_existing_week_file(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    _seed_week_plan(tmp_path)
+    weeks = tmp_path / "plans" / "2026-im-lake-placid" / "weeks"
+    weeks.mkdir(parents=True)
+    (weeks / "2026-W15.md").write_text("# planned\n", encoding="utf-8")
+    _patch_roots(monkeypatch, tmp_path)
+
+    brief = briefs.review_week_brief(week_id="2026-W15")
+    assert brief["week_file_exists"] is True
+
+
+def test_review_week_brief_populates_from_db(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    _seed_week_plan(tmp_path)
+    _patch_roots(monkeypatch, tmp_path)
+
+    # Seed DB with a minimal planned-vs-actual + wellness + load for W15.
+    import sqlite3
+
+    from tempo.db import connect, init_schema
+
+    conn = connect()
+    try:
+        init_schema(conn)
+        # planned session + adherence + activity
+        conn.execute(
+            "INSERT INTO sessions_planned "
+            "(id, plan_id, week_id, date, sport, library_ref, target_tss, target_duration_s) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+            ("sp1", "2026-im-lake-placid", "2026-W15", "2026-04-08", "ride",
+             "long_ride_z2", 200.0, 10800),
+        )
+        conn.execute(
+            "INSERT INTO activities (id, start_date, sport, duration_s, tss) "
+            "VALUES (?, ?, ?, ?, ?)",
+            ("act1", "2026-04-08T07:00:00", "ride", 10500, 185.0),
+        )
+        conn.execute(
+            "INSERT INTO adherence (planned_session_id, activity_id, completed, "
+            "tss_delta, duration_delta_s, reason) VALUES (?, ?, ?, ?, ?, ?)",
+            ("sp1", "act1", 1, -15.0, -300, "completed"),
+        )
+        # wellness across the week
+        conn.execute(
+            "INSERT INTO wellness_daily (date, sleep_h, hrv, rhr, readiness) "
+            "VALUES (?, ?, ?, ?, ?)",
+            ("2026-04-06", 7.5, 65.0, 50, 8),
+        )
+        conn.execute(
+            "INSERT INTO wellness_daily (date, sleep_h, hrv, rhr, readiness) "
+            "VALUES (?, ?, ?, ?, ?)",
+            ("2026-04-12", 6.8, 60.0, 53, 6),
+        )
+        # load trajectory
+        conn.execute(
+            "INSERT INTO load_daily (date, ctl, atl, tsb) VALUES (?, ?, ?, ?)",
+            ("2026-04-06", 70.0, 60.0, 10.0),
+        )
+        conn.execute(
+            "INSERT INTO load_daily (date, ctl, atl, tsb) VALUES (?, ?, ?, ?)",
+            ("2026-04-12", 72.0, 85.0, -13.0),
+        )
+    finally:
+        conn.close()
+    assert isinstance(sqlite3.version, str)  # keep import used
+
+    brief = briefs.review_week_brief(week_id="2026-W15")
+    assert brief["adherence"]["planned_count"] == 1
+    assert brief["adherence"]["completed_count"] == 1
+    assert brief["per_sport_tss"] == {"ride": {"planned": 200.0, "actual": 185.0}}
+    assert len(brief["deltas"]) == 1
+    assert brief["deltas"][0]["tss_delta"] == pytest.approx(-15.0)
+    assert len(brief["wellness_trend"]) == 2
+    assert brief["load_trajectory"]["start_ctl"] == pytest.approx(70.0)
+    assert brief["load_trajectory"]["end_ctl"] == pytest.approx(72.0)
+    assert brief["load_trajectory"]["peak_atl"] == pytest.approx(85.0)
+    assert brief["load_trajectory"]["low_tsb"] == pytest.approx(-13.0)

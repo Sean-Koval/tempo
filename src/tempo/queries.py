@@ -62,6 +62,16 @@ class ReadinessRow:
 
 
 @dataclass
+class WellnessRow:
+    date: str
+    sleep_h: float | None = None
+    hrv: float | None = None
+    rhr: int | None = None
+    readiness: int | None = None
+    notes: str | None = None
+
+
+@dataclass
 class AdherenceItemRow:
     planned_session_id: str
     date: str | None = None
@@ -173,6 +183,21 @@ def get_load_curve(
     ).fetchall()
     _ = sport  # retained in signature for future per-sport filtering.
     return [LoadPointRow(**dict(r)) for r in rows]
+
+
+def get_wellness_range(
+    conn: sqlite3.Connection,
+    *,
+    start_date: str,
+    end_date: str,
+) -> list[WellnessRow]:
+    """Return daily wellness rows in ``[start_date, end_date]``, ordered ascending."""
+    rows = conn.execute(
+        "SELECT date, sleep_h, hrv, rhr, readiness, notes "
+        "FROM wellness_daily WHERE date BETWEEN ? AND ? ORDER BY date",
+        (start_date, end_date),
+    ).fetchall()
+    return [WellnessRow(**dict(r)) for r in rows]
 
 
 def get_readiness(
@@ -360,9 +385,11 @@ __all__ = [
     "DeltaRow",
     "LoadPointRow",
     "ReadinessRow",
+    "WellnessRow",
     "compare_plan_to_actual",
     "get_adherence",
     "get_load_curve",
     "get_readiness",
+    "get_wellness_range",
     "query_activities",
 ]

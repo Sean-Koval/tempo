@@ -127,6 +127,32 @@ def test_get_readiness_empty_window(conn: sqlite3.Connection) -> None:
     assert snap.hrv_trend_delta is None
 
 
+def test_get_wellness_range_returns_daily_rows_ascending(
+    conn: sqlite3.Connection,
+) -> None:
+    for i, (sleep, hrv, rhr, read) in enumerate(
+        [(7.5, 70.0, 52, 8), (6.5, 65.0, 55, 6), (8.0, 72.0, 50, 9)]
+    ):
+        d = (date(2026, 4, 20) + timedelta(days=i)).isoformat()
+        conn.execute(
+            "INSERT INTO wellness_daily (date, sleep_h, hrv, rhr, readiness) "
+            "VALUES (?, ?, ?, ?, ?)",
+            (d, sleep, hrv, rhr, read),
+        )
+    rows = queries.get_wellness_range(
+        conn, start_date="2026-04-20", end_date="2026-04-22"
+    )
+    assert [r.date for r in rows] == ["2026-04-20", "2026-04-21", "2026-04-22"]
+    assert rows[0].sleep_h == pytest.approx(7.5)
+    assert rows[2].readiness == 9
+
+
+def test_get_wellness_range_empty(conn: sqlite3.Connection) -> None:
+    assert queries.get_wellness_range(
+        conn, start_date="2026-04-20", end_date="2026-04-22"
+    ) == []
+
+
 def test_get_adherence_counts_and_totals(conn: sqlite3.Connection) -> None:
     rows = [
         ("sp1", "2026-04-20", "ride", "long_ride_z2", 200.0),
