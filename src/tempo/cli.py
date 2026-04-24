@@ -31,6 +31,12 @@ app = typer.Typer(
     help="Tempo — local-first Ironman coaching agent.",
     no_args_is_help=True,
 )
+vectors_app = typer.Typer(
+    name="vectors",
+    help="Manage the knowledge vector index (data/vectors/knowledge.lance).",
+    no_args_is_help=True,
+)
+app.add_typer(vectors_app)
 
 console = Console()
 
@@ -234,6 +240,72 @@ def _print_active_injuries() -> None:
         console.print("[bold red]Active injury flags[/bold red]")
         for f in flags:
             console.print(f"  • {f}")
+
+
+@vectors_app.command("rebuild")
+def vectors_rebuild_cmd(
+    force: bool = typer.Option(False, "--force", help="Re-embed even if file hash matches."),
+    path: list[str] = typer.Option(
+        None,
+        "--path",
+        help="Limit to specific .md files (repeatable). Default: all of knowledge/.",
+    ),
+) -> None:
+    """Embed knowledge/ into data/vectors/knowledge.lance."""
+    from pathlib import Path as _Path
+
+    from .embed import rebuild
+
+    console.print("[bold]Vectors[/bold] — embedding knowledge/…")
+    targets = [_Path(p) for p in path] if path else None
+    try:
+        stats = rebuild(paths=targets, force=force)
+    except Exception as e:
+        console.print(f"[red]rebuild failed:[/red] {e}")
+        raise typer.Exit(code=1) from e
+
+    console.print(
+        f"  scanned: [green]{stats.files_scanned}[/green] • "
+        f"embedded: [green]{stats.files_embedded}[/green] • "
+        f"skipped: {stats.files_skipped} • "
+        f"chunks: [green]{stats.chunks_written}[/green] "
+        f"(deleted {stats.chunks_deleted}) • "
+        f"{stats.duration_ms}ms"
+    )
+    if stats.paths_indexed:
+        for p in stats.paths_indexed:
+            console.print(f"  [dim]•[/dim] {p}")
+
+
+@vectors_app.command("search")
+def vectors_search_cmd(
+    query: str = typer.Argument(..., help="Natural-language query."),
+    k: int = typer.Option(5, "--k", help="Max hits to return."),
+    topic: str = typer.Option(None, "--topic", help="Filter to a specific frontmatter topic."),
+    credibility_min: str = typer.Option(
+        None,
+        "--credibility-min",
+        help="Drop hits weaker than this level "
+        "(peer_reviewed|expert_practitioner|evidence_based_journalism|experiential).",
+    ),
+) -> None:
+    """Semantic search against knowledge.lance."""
+    from .embed import search
+
+    hits = search(query, k=k, topic=topic, credibility_min=credibility_min)
+    if not hits:
+        console.print("[yellow]No hits. Run `coach vectors rebuild` first?[/yellow]")
+        raise typer.Exit(code=0)
+
+    table = Table(title=f"Knowledge search: {query!r}", show_header=True, header_style="bold")
+    for col in ("Score", "Credibility", "Path", "Chunk"):
+        table.add_column(col)
+    for h in hits:
+        cred = h.credibility
+        cred_fmt = f"[red]{cred}[/red]" if cred == "unvetted" else cred
+        preview = h.text.replace("\n", " ")[:80]
+        table.add_row(f"{h.score:.3f}", cred_fmt, h.path, preview + "…")
+    console.print(table)
 
 
 if __name__ == "__main__":  # pragma: no cover - defensive entry
