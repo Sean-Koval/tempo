@@ -77,6 +77,23 @@ class AdherenceReport(BaseModel):
     items: list[AdherenceItem]
 
 
+class MemoryHit(BaseModel):
+    id: str
+    text: str
+    source: str
+    scope: str = ""
+    kind: str = ""
+    timestamp: str = ""
+    file_path: str = ""
+    score: float = 0.0
+
+
+class DecisionLogged(BaseModel):
+    id: int
+    embedded: bool
+    timestamp: str
+
+
 class Snippet(BaseModel):
     id: str
     text: str

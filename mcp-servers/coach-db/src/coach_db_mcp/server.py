@@ -13,12 +13,14 @@ from typing import Any
 from fastmcp import FastMCP
 from tempo.db import connect, init_schema
 
-from . import knowledge, sql
+from . import knowledge, memory, sql
 from .models import (
     ActivityOut,
     AdherenceReport,
+    DecisionLogged,
     Delta,
     LoadPoint,
+    MemoryHit,
     ReadinessSnapshot,
     Snippet,
 )
@@ -108,6 +110,49 @@ def compare_plan_to_actual(week_id: str) -> list[Delta]:
     """Per-session deltas for a week. Raw numbers — the agent applies decision-rules."""
     with _db() as conn:
         return sql.compare_plan_to_actual(conn, week_id=week_id)
+
+
+@mcp.tool
+def search_memory(
+    query: str,
+    k: int = 5,
+    since: str | None = None,
+    scope: str | None = None,
+    kind: str | None = None,
+) -> list[MemoryHit]:
+    """Semantic search over memory.lance (decisions + journals + changelogs).
+
+    ``since`` is an ISO date (YYYY-MM-DD); hits with an earlier timestamp are
+    dropped. ``scope`` is a prefix match (e.g. 'week:2026-W17', 'plan:'). ``kind``
+    exact-matches decisions.kind (so it only returns decision rows).
+    """
+    return memory.search_memory_hits(
+        query, k=k, since=since, scope=scope, kind=kind
+    )
+
+
+@mcp.tool
+def log_decision(
+    scope: str,
+    kind: str,
+    rationale: str,
+    changed_files: list[str] | None = None,
+) -> DecisionLogged:
+    """Persist a coaching decision.
+
+    Writes to the decisions table and synchronously embeds the rationale into
+    memory.lance so a subsequent search_memory finds it in the same session.
+    ``scope`` examples: 'week:2026-W17', 'plan:ironman-lp', 'session:abc123'.
+    ``kind``: 'plan' | 'adjust' | 'review' | 'observation'.
+    """
+    with _db() as conn:
+        return memory.log_decision(
+            conn,
+            scope=scope,
+            kind=kind,
+            rationale=rationale,
+            changed_files=changed_files,
+        )
 
 
 @mcp.tool
