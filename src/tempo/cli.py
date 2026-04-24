@@ -13,6 +13,7 @@ Agentic verbs (``plan week``, ``review week``, ``bootstrap-plan``, ``research``,
 from __future__ import annotations
 
 import asyncio
+
 import typer
 from rich.table import Table
 
