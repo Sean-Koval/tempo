@@ -605,3 +605,193 @@ def test_ingest_brief_rejects_remote_pdf(
     )
     with pytest.raises(briefs.IngestSourceError, match="remote PDF"):
         briefs.ingest_research_brief("https://example.com/paper.pdf")
+
+
+# --- race_plan_brief --------------------------------------------------------
+
+_PLAN_WITH_PEAK_TAPER = """\
+plan_id: 2026-im-lake-placid
+template: ironman_full_24wk
+start_date: 2026-03-02
+target_date: 2026-07-26
+total_weeks: 24
+phases:
+  - id: base
+    start_week: 2026-W10
+    weeks: 4
+    weekly_tss_target: [350, 450]
+  - id: build
+    start_week: 2026-W14
+    weeks: 6
+    weekly_tss_target: [600, 750]
+  - id: peak
+    start_week: 2026-W20
+    weeks: 3
+    weekly_tss_target: [700, 800]
+  - id: taper
+    start_week: 2026-W23
+    weeks: 3
+    weekly_tss_target: [400, 500]
+"""
+
+
+def _seed_race_plan_repo(
+    tmp_path: Path,
+    *,
+    race_date: str,
+    priority: str = "A",
+) -> None:
+    """Seed athlete + plan files for race_plan_brief tests."""
+    (tmp_path / "athlete").mkdir()
+    (tmp_path / "athlete" / "profile.yaml").write_text(
+        "athlete:\n  name: Sean\n  weight_kg: 75\n"
+        "thresholds:\n  ftp_w: 265\n  lthr_bpm: 168\n"
+        "  run_threshold_pace: '6:30'\n  swim_css_pace: '1:35'\n",
+        encoding="utf-8",
+    )
+    (tmp_path / "athlete" / "injury-log.md").write_text(
+        "# Log\n\n## Active\n\n_No active flags._\n", encoding="utf-8"
+    )
+    (tmp_path / "athlete" / "preferences.md").write_text(
+        "# Prefs\n\n## Hard constraints\n- Respect injury flags.\n",
+        encoding="utf-8",
+    )
+    (tmp_path / "athlete" / "race-calendar.yaml").write_text(
+        f"races:\n"
+        f"  - id: 2026-im-lake-placid\n"
+        f"    name: Ironman Lake Placid\n"
+        f"    date: {race_date}\n"
+        f"    distance: ironman\n"
+        f"    priority: {priority}\n"
+        f"    location: Lake Placid, NY\n"
+        f"    expected_conditions: warm/humid\n",
+        encoding="utf-8",
+    )
+    (tmp_path / "athlete" / "goals.yaml").write_text("goals: []\n", encoding="utf-8")
+    plan_dir = tmp_path / "plans" / "2026-im-lake-placid"
+    plan_dir.mkdir(parents=True)
+    (plan_dir / "plan.yaml").write_text(_PLAN_WITH_PEAK_TAPER, encoding="utf-8")
+
+
+def _seed_athlete_tested(tmp_path: Path) -> None:
+    nutrition = tmp_path / "knowledge" / "nutrition"
+    nutrition.mkdir(parents=True, exist_ok=True)
+    (nutrition / "athlete-tested.yaml").write_text(
+        "entries:\n"
+        "  - date: 2026-03-15\n"
+        "    session_type: race_sim_brick\n"
+        "    duration_h: 4.5\n"
+        "    products:\n"
+        "      - name: Maurten Gel 160\n"
+        "        qty: 6\n"
+        "    totals:\n"
+        "      carbs_g: 240\n"
+        "      carbs_g_per_hr: 80\n"
+        "      sodium_mg: 1000\n"
+        "    gut_response: 5\n"
+        "  - date: 2026-04-01\n"
+        "    session_type: long_ride_z2\n"
+        "    products:\n"
+        "      - name: SiS Beta Fuel\n"
+        "    totals:\n"
+        "      carbs_g_per_hr: 100\n"
+        "    gut_response: 2\n",
+        encoding="utf-8",
+    )
+
+
+def test_race_plan_brief_explicit_id(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from datetime import date
+    _seed_race_plan_repo(tmp_path, race_date="2026-07-26")
+    _seed_athlete_tested(tmp_path)
+    _patch_roots(monkeypatch, tmp_path)
+
+    today = date(2026, 6, 28)  # ~4 weeks out
+    brief = briefs.race_plan_brief("2026-im-lake-placid", today=today)
+
+    assert brief["race"]["id"] == "2026-im-lake-placid"
+    assert brief["race"]["date"] == "2026-07-26"
+    assert brief["weeks_until_race"] == 4
+    assert brief["plan"]["plan_id"] == "2026-im-lake-placid"
+    assert brief["plan"]["taper_phase"]["id"] == "taper"
+    assert brief["plan"]["peak_phase"]["id"] == "peak"
+    # athlete-tested summary feeds the binding constraint logic.
+    assert brief["nutrition"]["entries_count"] == 2
+    assert brief["nutrition"]["tolerated_max_carbs_g_per_hr"] == 80.0  # gut_response=5 entry
+    assert "SiS Beta Fuel" in brief["nutrition"]["failed_products"]  # gut_response=2
+    assert brief["race_plan_path"].endswith("race-day-plan.md")
+    assert brief["race_plan_exists"] is False
+
+
+def test_race_plan_brief_auto_picks_next_a_race(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from datetime import date
+    _seed_race_plan_repo(tmp_path, race_date="2026-07-26")
+    _seed_athlete_tested(tmp_path)
+    _patch_roots(monkeypatch, tmp_path)
+
+    today = date(2026, 7, 5)  # 21 days out, within 28-day default
+    brief = briefs.race_plan_brief(today=today)
+    assert brief["race"]["id"] == "2026-im-lake-placid"
+    assert brief["days_until_race"] == 21
+
+
+def test_race_plan_brief_no_race_within_window(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from datetime import date
+    _seed_race_plan_repo(tmp_path, race_date="2099-01-01")  # too far out
+    _patch_roots(monkeypatch, tmp_path)
+
+    with pytest.raises(briefs.NoUpcomingRaceError, match="no A-priority race"):
+        briefs.race_plan_brief(today=date(2026, 4, 25))
+
+
+def test_race_plan_brief_skips_non_a_priority(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from datetime import date
+    _seed_race_plan_repo(tmp_path, race_date="2026-05-15", priority="B")
+    _patch_roots(monkeypatch, tmp_path)
+
+    with pytest.raises(briefs.NoUpcomingRaceError):
+        briefs.race_plan_brief(today=date(2026, 4, 25))
+
+
+def test_race_plan_brief_unknown_race_raises(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    _seed_race_plan_repo(tmp_path, race_date="2026-07-26")
+    _patch_roots(monkeypatch, tmp_path)
+    with pytest.raises(briefs.NoUpcomingRaceError, match="not found"):
+        briefs.race_plan_brief("2026-bogus-race")
+
+
+def test_race_plan_brief_existing_plan_flagged(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from datetime import date
+    _seed_race_plan_repo(tmp_path, race_date="2026-07-26")
+    _seed_athlete_tested(tmp_path)
+    plan_dir = tmp_path / "plans" / "2026-im-lake-placid"
+    (plan_dir / "race-day-plan.md").write_text("# existing\n", encoding="utf-8")
+    _patch_roots(monkeypatch, tmp_path)
+
+    brief = briefs.race_plan_brief("2026-im-lake-placid", today=date(2026, 6, 28))
+    assert brief["race_plan_exists"] is True
+
+
+def test_race_plan_brief_handles_missing_athlete_tested(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from datetime import date
+    _seed_race_plan_repo(tmp_path, race_date="2026-07-26")
+    # No knowledge/nutrition/athlete-tested.yaml seeded.
+    _patch_roots(monkeypatch, tmp_path)
+
+    brief = briefs.race_plan_brief("2026-im-lake-placid", today=date(2026, 6, 28))
+    assert brief["nutrition"]["exists"] is False
+    assert brief["nutrition"]["entries"] == []
