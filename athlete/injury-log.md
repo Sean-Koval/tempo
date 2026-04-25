@@ -8,7 +8,18 @@ Format: reverse-chronological. Close entries with an outcome line so the history
 
 ## Active
 
-_No active flags._
+### 2026-04-25 — left tibia (BSI grade 2) — severity 4
+- **Status:** active
+- **Onset:** diagnosed via imaging; running-load-driven bone stress
+- **Symptoms:** localized pain at tibial mid-shaft on impact; no symptoms on bike or in pool
+- **Constraints:**
+  - **No running** (zero impact loading) — minimum 6 weeks from 2026-04-25
+  - **No high-impact plyos / jumping**
+  - Standing climbs on bike OK if pain-free; avoid sustained out-of-saddle on rough terrain
+  - Swimming OK once cleared (~2026-06-06 target)
+- **Rehab:** loading progression to be defined with PT — start with light running ~2026-06-06 if asymptomatic; early-window protocol = walk/jog return-to-run
+- **Check-in:** 2026-06-06 (re-image + clinical reassessment)
+- **Plan implication:** primary sport is **bike** through 2026-06; swim re-enters ~early June; run re-enters ~early June at walk-jog volume only.
 
 <!-- Template when adding:
 ### YYYY-MM-DD — <body part> — <severity 1-5>

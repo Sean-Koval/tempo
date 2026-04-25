@@ -1,0 +1,22 @@
+# Frozen snapshot of the goal as of plan creation.
+# If athlete/race-calendar.yaml is edited after this point, re-run /bootstrap-plan
+# to pick up the change and append a changelog entry.
+
+id: 2027-half-ironman
+name: "Half Ironman (TBD venue)"
+date: 2027-05-01            # PLACEHOLDER — confirm exact date + race
+distance: half_ironman
+priority: A
+location: "TBD"
+expected_conditions:
+  terrain: "TBD"
+  water_temp_c: null
+  air_temp_c: [null, null]
+goals:
+  finish_time: "TBD"
+  bike_power_target_w: null
+  run_pace_target: "TBD"
+notes: |
+  Anchor A-race for the 2026-2027 build. Currently injured (left tibial BSI g2,
+  see injury-log.md) — bike-led base through ~2026-06-06, then phased re-entry of
+  swim and run.

@@ -1,0 +1,146 @@
+plan_id: 2027-half-ironman
+goal_ref: 2027-half-ironman
+template: ironman_half_16wk_with_bsi_preblock
+start_date: 2026-04-27        # Mon of 2026-W17 (this week)
+target_date: 2027-05-01       # PLACEHOLDER race date — confirm and re-bootstrap if it shifts
+total_weeks: 53
+weekly_hours_budget: 8        # PLACEHOLDER — preferences.md TODO; 8 h/wk is conservative bike-led starting point
+
+# TSS targets are scaled assuming a ~10h/wk capable athlete from
+# ironman-build-structure.md and reduced ~20% for the 8h budget. They are
+# RANGES, not quotas. plan-training-week selects the point value per week from
+# adherence + wellness + load drift.
+
+phases:
+
+  # ---- PRE-BLOCK (37 weeks): injury-driven; not in the standard template ----
+
+  - id: rehab_bike_only
+    start_week: 2026-W17
+    weeks: 6
+    goal: "BSI rehab. Bike-only aerobic foundation + strength foundation. No impact loading."
+    sport_focus: { bike: 0.85, swim: 0.0, run: 0.0, strength: 0.15 }
+    weekly_tss_target: [250, 380]
+    intensity_distribution: { z1_z2: 92, z3: 6, z4_plus: 2 }
+    key_sessions: [easy_aerobic_ride, long_ride_z2, strength_foundation]
+    constraints:
+      - "HARD: zero running, zero plyo (R-7, R-5)"
+      - "HARD: per injury-log.md, swim deferred until 2026-06-06 PT clearance"
+      - "Avoid sustained out-of-saddle on rough terrain; standing climbs OK if pain-free"
+    notes: |
+      Volume rebuild on the bike. Z2 density. Strength is anatomical
+      adaptation — squat, deadlift, split squat, row, core (3×8–10).
+      Long ride caps at ~3h Z2 by end of phase if asymptomatic.
+
+  - id: return_to_3sport
+    start_week: 2026-W23
+    weeks: 4
+    goal: "Phased re-entry of swim + walk/jog. Bike volume held."
+    sport_focus: { bike: 0.55, swim: 0.20, run: 0.10, strength: 0.15 }
+    weekly_tss_target: [280, 420]
+    intensity_distribution: { z1_z2: 90, z3: 8, z4_plus: 2 }
+    key_sessions:
+      - technique_swim
+      - aerobic_swim_set
+      - return_to_run_walk_jog       # NEW — agent must add to session-library.md
+      - long_ride_z2
+      - strength_foundation
+    constraints:
+      - "HARD: contingent on PT clearance at ~2026-06-06 check-in (injury-log.md)"
+      - "Run-volume cap: ≤15 min run-time/session, ≤2 sessions/wk, walk/jog only"
+      - "Swim begins at technique-only (1×/wk) → aerobic 2×/wk by phase end"
+      - "Any tibia symptom on warmup → R-6 abandon + log to injury-log.md"
+    notes: |
+      The single highest-risk phase. Session adds beyond the constraints
+      require explicit changelog rationale. plan-training-week is expected
+      to err conservative here.
+
+  # ---- AEROBIC BASE EXTENDED (27 weeks): substitute for 24wk template's base+anatomical ----
+
+  - id: aerobic_base_1_volume
+    start_week: 2026-W27
+    weeks: 9
+    goal: "Build weekly volume across 3 sports. Bike still primary; run accumulates patience."
+    sport_focus: { bike: 0.50, swim: 0.20, run: 0.20, strength: 0.10 }
+    weekly_tss_target: [350, 500]
+    intensity_distribution: { z1_z2: 88, z3: 9, z4_plus: 3 }
+    key_sessions: [long_ride_z2, long_run_z2, aerobic_swim_set, technique_swim, strength_maintenance]
+    constraints:
+      - "HARD: long-run progression ≤+10%/wk by duration (R-14)"
+      - "3-build, 1-down weekly cadence (R-15)"
+      - "First long_run_z2 caps at 30 min — 4 weeks since walk/jog re-entry"
+
+  - id: aerobic_base_2_durability
+    start_week: 2026-W36
+    weeks: 9
+    goal: "Durability — extend long sessions. Tempo-bike block introduced. Run still Z2-dominant."
+    sport_focus: { bike: 0.45, swim: 0.20, run: 0.25, strength: 0.10 }
+    weekly_tss_target: [430, 600]
+    intensity_distribution: { z1_z2: 85, z3: 11, z4_plus: 4 }
+    key_sessions: [long_ride_z2, long_run_z2, tempo_bike_block, cruise_interval_run, aerobic_swim_set]
+    constraints:
+      - "HARD: any tibia symptom recurrence → revert to aerobic_base_1 + log to injury-log.md"
+      - "Long ride to 3.5h by phase end; long run to 75 min"
+
+  - id: pre_build_bridge
+    start_week: 2026-W45
+    weeks: 9
+    goal: "Bridge to standard 70.3 build. First race-pace touches on bike. Run brick exposure."
+    sport_focus: { bike: 0.45, swim: 0.20, run: 0.25, strength: 0.10 }
+    weekly_tss_target: [480, 650]
+    intensity_distribution: { z1_z2: 80, z3: 13, z4_plus: 7 }
+    key_sessions: [long_ride_z2, long_run_z2, race_pace_bike, brick_run_off_bike, aerobic_swim_set]
+    constraints:
+      - "Race-pace bike intervals capped at 2×20 min @ race NP through phase"
+      - "Bricks limited to bike + 20 min run for first 4 weeks; ramp from there"
+
+  # ---- 70.3 STANDARD 16wk (template: ironman_half_16wk) ----
+
+  - id: base                       # weeks 1-6 of 16wk template
+    start_week: 2027-W02
+    weeks: 6
+    goal: "70.3 base — aerobic foundation + durability per ironman_half_16wk."
+    sport_focus: { bike: 0.40, swim: 0.20, run: 0.30, strength: 0.10 }
+    weekly_tss_target: [550, 720]
+    intensity_distribution: { z1_z2: 85, z3: 10, z4_plus: 5 }
+    key_sessions: [long_ride_z2, long_run_z2, cruise_intervals, aerobic_swim_set]
+
+  - id: build                      # weeks 7-12
+    start_week: 2027-W08
+    weeks: 6
+    goal: "Race-specific intensity + pacing. Race-pace blocks central."
+    sport_focus: { bike: 0.40, swim: 0.20, run: 0.30, strength: 0.10 }
+    weekly_tss_target: [620, 800]
+    intensity_distribution: { z1_z2: 75, z3: 15, z4_plus: 10 }
+    key_sessions: [race_pace_bike, threshold_run, brick_run_off_bike, race_pace_swim]
+
+  - id: peak                       # weeks 13-14
+    start_week: 2027-W14
+    weeks: 2
+    goal: "Sharpening + race simulation. Fueling rehearsal mandatory (R-17)."
+    sport_focus: { bike: 0.40, swim: 0.20, run: 0.30, strength: 0.10 }
+    weekly_tss_target: [580, 720]
+    intensity_distribution: { z1_z2: 75, z3: 15, z4_plus: 10 }
+    key_sessions: [race_sim_brick, race_day_fueling_rehearsal, tune_up_race]
+
+  - id: taper                      # weeks 15-16
+    start_week: 2027-W16
+    weeks: 2
+    goal: "Freshen without detraining. -40% vol -> -60% in race week."
+    sport_focus: { bike: 0.40, swim: 0.20, run: 0.30, strength: 0.10 }
+    weekly_tss_target: [280, 420]
+    intensity_distribution: { z1_z2: 80, z3: 15, z4_plus: 5 }
+    key_sessions: [short_race_pace_opener, easy_spin, race_week_primer_run]
+
+race_markers:
+  - week_id: 2027-W17
+    kind: A
+    note: "Half Ironman race day (2027-05-01 placeholder) — full taper active"
+
+# ---- Calibration TODOs (block before this plan can drive plan-training-week)
+#
+# 1. Confirm exact race date + venue → update goal.yaml + plan.yaml + race-calendar.yaml
+# 2. Fill athlete/profile.yaml (FTP, weight, LTHR, swim CSS, max/resting HR)
+# 3. Fill athlete/preferences.md (weekly hours, available days, hard-day pattern)
+# 4. PT-cleared return-to-run protocol — log to injury-log.md and reference here
+# 5. Run `coach sync` to populate coach.db (load curve currently empty)
