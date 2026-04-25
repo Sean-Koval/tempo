@@ -157,6 +157,40 @@ def push_week_cmd(
     )
 
 
+@app.command("doctor")
+def doctor_cmd() -> None:
+    """Run preflight checks against intervals.icu, coach.db, vectors, plans.
+
+    Exits non-zero if any check fails. Use this to diagnose 'Access denied'
+    errors from intervals (it distinguishes 401 vs 403 vs malformed athlete ID
+    vs missing env vars) and to confirm the planning loop's preconditions
+    before drafting a week.
+    """
+    from .diagnostics import run_all
+
+    results = run_all()
+
+    table = Table(title="Tempo doctor", show_header=True, header_style="bold")
+    for col in ("Status", "Check", "Detail"):
+        table.add_column(col)
+
+    badge = {
+        "ok": "[green]ok[/green]",
+        "warn": "[yellow]warn[/yellow]",
+        "fail": "[red]fail[/red]",
+    }
+    for r in results:
+        cell = r.message
+        if r.suggested_fix:
+            cell += f"\n[dim]→ {r.suggested_fix}[/dim]"
+        table.add_row(badge[r.status], r.name, cell)
+
+    console.print(table)
+
+    if any(r.status == "fail" for r in results):
+        raise typer.Exit(code=1)
+
+
 @app.command("check-in")
 def check_in_cmd(
     for_date: str = typer.Option(
