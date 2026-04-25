@@ -34,6 +34,10 @@ def render_macro(
 
     body_parts: list[str] = [_header(resolved_plan_id, plan_doc)]
 
+    debt_card = _calibration_debt_card(resolved_plan_id, conn=conn, root=root)
+    if debt_card:
+        body_parts.append(debt_card)
+
     gantt = _gantt(plan_doc, today=today)
     if gantt:
         body_parts.append(gantt)
@@ -426,6 +430,64 @@ def _weekly_actual_tss(
             if total > 0:
                 out[wid] = total
     return out
+
+
+def _calibration_debt_card(
+    plan_id: str | None,
+    *,
+    conn: sqlite3.Connection | None,
+    root: Path | None,
+) -> str:
+    """Render outstanding calibration debt as a card; returns '' when none."""
+    from ..calibration import calibration_debt
+
+    if plan_id is None:
+        return ""
+
+    debts = calibration_debt(plan_id, root=root, conn=conn)
+    if not debts:
+        return ""
+
+    rows: list[str] = []
+    for debt in debts:
+        sev_class = "sev-fail" if debt.severity == "fail" else "sev-warn"
+        blocks_html = (
+            f"<div class='blocks'>blocks: {escape(', '.join(debt.blocks))}</div>"
+            if debt.blocks
+            else ""
+        )
+        rows.append(
+            "<tr>"
+            f"<td><span class='badge {sev_class}'>{escape(debt.severity)}</span></td>"
+            f"<td><code>{escape(debt.field)}</code></td>"
+            "<td>"
+            f"<div>{escape(debt.message)}</div>"
+            f"<div class='fix'>→ {escape(debt.suggested_fix)}</div>"
+            f"{blocks_html}"
+            "</td>"
+            "</tr>"
+        )
+
+    return (
+        "<section class='card debt-card'>"
+        "<h2>Calibration debt</h2>"
+        "<p class='subtitle'>Inputs the plan still treats as placeholders.</p>"
+        "<table class='debt'><thead>"
+        "<tr><th>Severity</th><th>Field</th><th>Detail</th></tr>"
+        "</thead><tbody>"
+        + "\n".join(rows)
+        + "</tbody></table>"
+        "<style>"
+        ".debt-card .badge{padding:.1rem .5rem;border-radius:.25rem;font-size:.85em;font-weight:600;}"
+        ".debt-card .sev-fail{background:#fee;color:#900;}"
+        ".debt-card .sev-warn{background:#fef6e6;color:#7a4a00;}"
+        ".debt-card table.debt{width:100%;border-collapse:collapse;}"
+        ".debt-card table.debt td,.debt-card table.debt th{padding:.5rem;border-bottom:1px solid #eee;vertical-align:top;text-align:left;}"
+        ".debt-card .fix{color:#666;font-size:.9em;margin-top:.2rem;}"
+        ".debt-card .blocks{color:#888;font-size:.85em;margin-top:.2rem;font-style:italic;}"
+        "</style>"
+        "</section>"
+    )
 
 
 __all__ = ["render_macro"]

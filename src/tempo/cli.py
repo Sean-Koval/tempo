@@ -161,33 +161,55 @@ def push_week_cmd(
 def doctor_cmd() -> None:
     """Run preflight checks against intervals.icu, coach.db, vectors, plans.
 
-    Exits non-zero if any check fails. Use this to diagnose 'Access denied'
-    errors from intervals (it distinguishes 401 vs 403 vs malformed athlete ID
-    vs missing env vars) and to confirm the planning loop's preconditions
-    before drafting a week.
+    Also lists outstanding calibration debt against the active plan
+    (placeholder race date, missing FTP, empty load history, etc.).
+
+    Exits non-zero if any system check fails OR any calibration debt is
+    severity ``fail``. Warns are visible but don't fail the command.
     """
+    from .calibration import calibration_debt
     from .diagnostics import run_all
 
     results = run_all()
-
-    table = Table(title="Tempo doctor", show_header=True, header_style="bold")
-    for col in ("Status", "Check", "Detail"):
-        table.add_column(col)
 
     badge = {
         "ok": "[green]ok[/green]",
         "warn": "[yellow]warn[/yellow]",
         "fail": "[red]fail[/red]",
     }
+
+    table = Table(title="Tempo doctor — system", show_header=True, header_style="bold")
+    for col in ("Status", "Check", "Detail"):
+        table.add_column(col)
     for r in results:
         cell = r.message
         if r.suggested_fix:
             cell += f"\n[dim]→ {r.suggested_fix}[/dim]"
         table.add_row(badge[r.status], r.name, cell)
-
     console.print(table)
 
-    if any(r.status == "fail" for r in results):
+    debts = calibration_debt()
+    if debts:
+        debt_table = Table(
+            title="Calibration debt — active plan",
+            show_header=True,
+            header_style="bold",
+        )
+        for col in ("Severity", "Field", "Detail"):
+            debt_table.add_column(col)
+        for d in debts:
+            cell = d.message + f"\n[dim]→ {d.suggested_fix}[/dim]"
+            if d.blocks:
+                cell += f"\n[dim]   blocks: {', '.join(d.blocks)}[/dim]"
+            debt_table.add_row(badge[d.severity], d.field, cell)
+        console.print(debt_table)
+    else:
+        console.print("[dim]Calibration debt: none.[/dim]")
+
+    has_fail = any(r.status == "fail" for r in results) or any(
+        d.severity == "fail" for d in debts
+    )
+    if has_fail:
         raise typer.Exit(code=1)
 
 
