@@ -110,9 +110,9 @@ MCP servers wired in `.claude/settings.json`:
 
 ## Harness state
 
-- **Phase 0 complete** — scaffold, fork wired, extensions published.
-- **Phase 1–6** — see the plan file's Build Sequence. `bd list --status=open` shows what's queued.
-- **Skills** — directories exist as placeholders. SKILL.md files land in Phase 4.
+- **Phases 0–6 shipped.** Scaffold + intervals/coach-db/strava MCPs + sync/derive/embed scripts + skills + dashboards + nutrition corpus. `bd ready` shows P0 PRECONDs (athlete profile, race/goal declaration, intervals creds) plus two Phase-1 GAP tickets (aerobic decoupling, `push-week` → `bulk_upsert_tagged_events` wiring).
+- **Skills built** (in `.claude/skills/`): `bootstrap-plan`, `plan-training-week`, `review-week`, `morning-check-in`, `ingest-research`, `draft-race-plan`. Invoked as slash commands in Claude Code.
+- **Slash commands** (in `.claude/commands/`): `/coach-dashboard-week`, `/coach-dashboard-macro`, `/coach-dashboard-decisions` render HTML artifacts.
 - **Permissions** (`.claude/settings.json`) — minimal allowlist for common read-only bash (git status/diff/log, `uv run`, `sqlite3` read-only, `bd` meta). Anything destructive still prompts.
 
 ---

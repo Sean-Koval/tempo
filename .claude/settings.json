@@ -1,38 +1,5 @@
 {
   "$schema": "https://json.schemastore.org/claude-code-settings.json",
-  "mcpServers": {
-    "intervals": {
-      "command": "uv",
-      "args": [
-        "run",
-        "--directory",
-        "./mcp-servers/intervals-icu-mcp",
-        "intervals-icu-mcp"
-      ],
-      "env": {
-        "INTERVALS_ICU_ATHLETE_ID": "${INTERVALS_ICU_ATHLETE_ID}",
-        "INTERVALS_ICU_API_KEY": "${INTERVALS_ICU_API_KEY}"
-      }
-    },
-    "coach-db": {
-      "command": "uv",
-      "args": [
-        "run",
-        "--directory",
-        "./mcp-servers/coach-db",
-        "coach-db-mcp"
-      ]
-    },
-    "strava": {
-      "command": "npx",
-      "args": ["-y", "@r-huijts/strava-mcp-server"],
-      "env": {
-        "STRAVA_CLIENT_ID": "${STRAVA_CLIENT_ID}",
-        "STRAVA_CLIENT_SECRET": "${STRAVA_CLIENT_SECRET}",
-        "STRAVA_REFRESH_TOKEN": "${STRAVA_REFRESH_TOKEN}"
-      }
-    }
-  },
   "permissions": {
     "allow": [
       "Bash(uv run:*)",

@@ -31,6 +31,8 @@ venv/
 .idea/
 *.swp
 .DS_Store
+# WSL/NTFS alternate-data-stream sidecar files
+*:Zone.Identifier
 
 # uv
 .uv/

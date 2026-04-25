@@ -11,7 +11,7 @@
   <a href="https://docs.claude.com/en/docs/claude-code"><img alt="Built with Claude Code" src="https://img.shields.io/badge/built%20with-Claude%20Code-cc785c"></a>
   <a href="https://intervals.icu"><img alt="intervals.icu" src="https://img.shields.io/badge/data-intervals.icu-0a66c2"></a>
   <a href="https://modelcontextprotocol.io"><img alt="MCP protocol" src="https://img.shields.io/badge/protocol-MCP-6e56cf"></a>
-  <a href="#build-phases"><img alt="Phase 3 shipped" src="https://img.shields.io/badge/phase-3%20shipped-22c55e"></a>
+  <a href="#build-phases"><img alt="Phase 6 shipped" src="https://img.shields.io/badge/phase-6%20shipped-22c55e"></a>
 </p>
 
 </div>
@@ -123,35 +123,35 @@ $EDITOR athlete/goals.yaml
 bash scripts/install-hooks.sh
 ```
 
-At this point you can have useful planning conversations with live intervals data. The weekly loop (`coach plan week`, `coach review week`) and the dashboards land in Phase 4–5 — see [build phases](#build-phases).
+At this point the full coaching loop is wired. Skills, dashboards, and the weekly rhythm are all live — see [build phases](#build-phases).
 
 ---
 
 ## A day in the life
-
-Once Phase 4 skills land, the rhythm looks like this:
 
 ```bash
 coach check-in              # morning wellness → intervals + coach.db
 # ... train as normal; Garmin → Strava → intervals is automatic ...
 coach sync                  # evening: pull activities, derive CTL/ATL/TSB
 
-# Sunday
-coach review week           # post-mortem — adherence, trends, lessons
-coach plan week --next      # draft next week, grounded in last week's data
+# Sunday — open Claude Code and run skills
+/review-week                # post-mortem — adherence, trends, lessons
+/plan-training-week         # draft next week, grounded in last week's data
 # -- you review the diff --
 coach push-week 2026-W18    # idempotent write to intervals calendar
 ```
 
-Deterministic vs agentic:
+Deterministic vs agentic — pick the right entry point:
 
-| Deterministic (pure scripts) | Agentic (Skill-invoked) |
+| Deterministic (pure scripts, no LLM) | Agentic (Skill in Claude Code) |
 | --- | --- |
-| `coach sync` | `coach plan week` |
-| `coach status` | `coach review week` |
-| `coach push-week <week>` | `coach bootstrap-plan <goal>` |
-| `coach vectors rebuild` | `coach research <topic>` |
-| `coach check-in` (prompted) | `coach ingest <url>` |
+| `coach sync` | `/bootstrap-plan` — goal → plan structure |
+| `coach status` | `/plan-training-week` — draft a week |
+| `coach push-week <week>` | `/review-week` — post-mortem on last week |
+| `coach vectors rebuild` | `/draft-race-plan` — 4-week race countdown |
+| `coach check-in` (prompted) | `/ingest-research` — URL/PDF → corpus |
+
+Plus three dashboard slash commands rendered as HTML artifacts: `/coach-dashboard-week`, `/coach-dashboard-macro`, `/coach-dashboard-decisions`.
 
 ---
 
@@ -187,10 +187,10 @@ Phases are not calendar-bound. Each is independently useful; you can stop early 
 | **0** | scaffold, intervals MCP wired, athlete + knowledge stubs — conversational planning works | shipped |
 | **1** | SQLite schema + `coach sync`/`coach status`; fast local queries | shipped |
 | **2** | LanceDB + knowledge corpus + auto-embed on commit | shipped |
-| **3** | **`coach-db` MCP** — typed surface: `query_activities`, `get_load_curve`, `get_readiness`, `get_adherence`, `compare_plan_to_actual`, `search_knowledge`, `search_memory`, `find_similar_session`, `log_decision`. Strava wired. | **shipped** |
-| **4** | `bootstrap-plan`, `plan-training-week`, `review-week`, `morning-check-in` Skills — full coaching loop | next |
-| **5** | Dashboards (week / macro / decisions) as HTML artifacts | planned |
-| **6** | `ingest-research`, `draft-race-plan`, nutrition deep-dive | planned |
+| **3** | **`coach-db` MCP** — typed surface: `query_activities`, `get_load_curve`, `get_readiness`, `get_adherence`, `compare_plan_to_actual`, `search_knowledge`, `search_memory`, `find_similar_session`, `log_decision`. Strava wired. | shipped |
+| **4** | `bootstrap-plan`, `plan-training-week`, `review-week`, `morning-check-in` Skills — full coaching loop | shipped |
+| **5** | Dashboards (week / macro / decisions) as HTML artifacts | shipped |
+| **6** | `ingest-research`, `draft-race-plan`, nutrition deep-dive (session fueling, carb-load, gut training) | shipped |
 
 ---
 
