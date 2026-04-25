@@ -12,6 +12,9 @@ data/vectors/
 data/raw/
 data/events.jsonl
 
+# Generated dashboard HTML — rebuildable from coach.db + plans/
+/dashboards/
+
 # Python
 __pycache__/
 *.py[cod]

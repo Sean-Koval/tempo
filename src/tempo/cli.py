@@ -40,6 +40,13 @@ vectors_app = typer.Typer(
 )
 app.add_typer(vectors_app)
 
+dashboard_app = typer.Typer(
+    name="dashboard",
+    help="Render HTML coaching dashboards into ./dashboards/.",
+    no_args_is_help=True,
+)
+app.add_typer(dashboard_app)
+
 
 def main() -> None:
     """Entry point declared in ``pyproject.toml`` ``[project.scripts]``."""
@@ -332,6 +339,119 @@ def vectors_search_cmd(
         preview = h.text.replace("\n", " ")[:80]
         table.add_row(f"{h.score:.3f}", cred_fmt, h.path, preview + "…")
     console.print(table)
+
+
+@dashboard_app.command("week")
+def dashboard_week_cmd(
+    week_id: str = typer.Argument(
+        "",
+        help="ISO week id (e.g. 2026-W17). Defaults to last completed week.",
+    ),
+    plan_id: str = typer.Option(
+        "",
+        "--plan-id",
+        help="Plan id under plans/. Defaults to auto-detection.",
+    ),
+    open_in_browser: bool = typer.Option(
+        False,
+        "--open",
+        help="Launch the rendered HTML in the default browser.",
+    ),
+) -> None:
+    """Render a single-week dashboard: planned vs actual + wellness + load."""
+    from .dashboards import render_week
+    from .dashboards.common import output_path, write_html
+
+    wid = week_id or None
+    pid = plan_id or None
+    try:
+        html = render_week(week_id=wid, plan_id=pid)
+    except Exception as e:
+        console.print(f"[red]render failed:[/red] {e}")
+        raise typer.Exit(code=1) from e
+
+    from datetime import date as _date
+    from datetime import timedelta as _td
+
+    from . import plans as _plans
+
+    resolved_wid = wid or _plans.week_id_for(_date.today() - _td(days=7))
+    scope = f"{plan_id or 'auto'}-{resolved_wid}"
+    out = write_html(html, output_path("week", scope))
+    console.print(f"[green]wrote[/green] {out}")
+
+    if open_in_browser:
+        import webbrowser
+
+        webbrowser.open(out.as_uri())
+
+
+@dashboard_app.command("macro")
+def dashboard_macro_cmd(
+    plan_id: str = typer.Option(
+        "",
+        "--plan-id",
+        help="Plan id under plans/. Defaults to auto-detection.",
+    ),
+    open_in_browser: bool = typer.Option(
+        False,
+        "--open",
+        help="Launch the rendered HTML in the default browser.",
+    ),
+) -> None:
+    """Render the macro 24-week timeline dashboard."""
+    from .dashboards import render_macro
+    from .dashboards.common import output_path, write_html
+
+    pid = plan_id or None
+    try:
+        html = render_macro(plan_id=pid)
+    except Exception as e:
+        console.print(f"[red]render failed:[/red] {e}")
+        raise typer.Exit(code=1) from e
+
+    out = write_html(html, output_path("macro", plan_id or "auto"))
+    console.print(f"[green]wrote[/green] {out}")
+    if open_in_browser:
+        import webbrowser
+
+        webbrowser.open(out.as_uri())
+
+
+@dashboard_app.command("decisions")
+def dashboard_decisions_cmd(
+    scope: str = typer.Option(
+        "",
+        "--scope",
+        help="Filter to a decisions.scope value (e.g. week:2026-W17, plan:2026-im).",
+    ),
+    since: str = typer.Option(
+        "",
+        "--since",
+        help="ISO date — only show decisions on or after this date. Default: 28d.",
+    ),
+    open_in_browser: bool = typer.Option(
+        False,
+        "--open",
+        help="Launch the rendered HTML in the default browser.",
+    ),
+) -> None:
+    """Render a scope-filtered decision-trace dashboard."""
+    from .dashboards import render_decisions
+    from .dashboards.common import output_path, write_html
+
+    try:
+        html = render_decisions(scope=scope or None, since=since or None)
+    except Exception as e:
+        console.print(f"[red]render failed:[/red] {e}")
+        raise typer.Exit(code=1) from e
+
+    out = write_html(html, output_path("decisions", scope or "all"))
+    console.print(f"[green]wrote[/green] {out}")
+    if open_in_browser:
+        import webbrowser
+
+        webbrowser.open(out.as_uri())
 
 
 if __name__ == "__main__":  # pragma: no cover - defensive entry
