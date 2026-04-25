@@ -13,7 +13,10 @@ from __future__ import annotations
 import sqlite3
 from dataclasses import asdict
 from datetime import date, timedelta
+from pathlib import Path
 from typing import Any
+
+import yaml
 
 from . import athlete, plans, queries
 from .db import connect, init_schema
@@ -479,10 +482,326 @@ def review_week_brief(
     }
 
 
+class IngestSourceError(ValueError):
+    """Raised when an ingest source can't be fetched or parsed."""
+
+
+def ingest_research_brief(source: str, *, today: date | None = None) -> dict[str, Any]:
+    """Assemble the brief for the ingest-research skill.
+
+    Args:
+        source: A URL (http/https) or a local filesystem path to a PDF.
+        today: Optional override for the ingest date (used in target_path).
+
+    Raises:
+        IngestSourceError: source can't be fetched or parsed.
+    """
+    from . import research
+
+    today = today or date.today()
+    today_iso = today.isoformat()
+
+    is_url = source.startswith(("http://", "https://"))
+    extracted: research.ExtractedSource
+
+    if is_url:
+        try:
+            html, ctype = research.fetch_url(source)
+        except Exception as e:
+            raise IngestSourceError(f"could not fetch {source}: {e}") from e
+        if "pdf" in ctype:
+            raise IngestSourceError(
+                "remote PDF fetch is not supported — download locally and pass the file path"
+            )
+        try:
+            extracted = research.extract_html(html)
+        except Exception as e:
+            raise IngestSourceError(f"could not parse HTML from {source}: {e}") from e
+    else:
+        path = Path(source).expanduser()
+        if not path.is_file():
+            raise IngestSourceError(f"file not found: {path}")
+        if path.suffix.lower() != ".pdf":
+            raise IngestSourceError(
+                f"unsupported local source {path.suffix!r} — only PDF is supported"
+            )
+        try:
+            extracted = research.extract_pdf(path)
+        except Exception as e:
+            raise IngestSourceError(f"could not parse PDF {path}: {e}") from e
+
+    repo = plans.repo_root()
+    sources_doc = research.load_sources_yaml(root=repo)
+    matched = research.match_source(
+        url=source if is_url else None,
+        title=extracted.detected_title,
+        sources=sources_doc,
+    )
+
+    fallback_slug = extracted.detected_title or (
+        Path(source).stem if not is_url else "untitled"
+    )
+    slug = research.slugify(fallback_slug)
+    target = research.target_path_for(
+        slug=slug,
+        detected_date=extracted.detected_date,
+        today_iso=today_iso,
+        root=repo,
+    )
+    duplicate = research.find_duplicate(extracted.sha256, root=repo)
+
+    return {
+        "source": source,
+        "source_kind": "url" if is_url else "pdf",
+        "ingested": today_iso,
+        "detected_title": extracted.detected_title,
+        "detected_authors": extracted.detected_authors,
+        "detected_date": extracted.detected_date,
+        "word_count": extracted.word_count,
+        "excerpt": extracted.excerpt,
+        "source_sha256": extracted.sha256,
+        "matched_source": (
+            {
+                "id": matched.id,
+                "name": matched.name,
+                "credibility": matched.credibility,
+                "topics": matched.topics,
+            }
+            if matched
+            else None
+        ),
+        "suggested_slug": slug,
+        "target_path": str(target.relative_to(repo)),
+        "duplicate_of": (
+            str(duplicate.relative_to(repo)) if duplicate else None
+        ),
+    }
+
+
+def _race_from_calendar(race_id: str) -> dict[str, Any] | None:
+    for race in athlete.load_races():
+        if race.get("id") == race_id:
+            return race
+    return None
+
+
+def _next_a_race(today: date, within_days: int) -> dict[str, Any] | None:
+    """Return the next A-priority race within ``within_days`` of today, or None."""
+    horizon = today + timedelta(days=within_days)
+    candidates: list[tuple[date, dict[str, Any]]] = []
+    for race in athlete.load_races():
+        priority = (race.get("priority") or "").upper()
+        if priority != "A":
+            continue
+        race_date = _parse_target_date(race.get("date") or race.get("target_date"))
+        if race_date is None or race_date < today or race_date > horizon:
+            continue
+        candidates.append((race_date, race))
+    if not candidates:
+        return None
+    candidates.sort(key=lambda x: x[0])
+    return candidates[0][1]
+
+
+class NoUpcomingRaceError(ValueError):
+    """Raised when race_plan_brief can't resolve a race to plan for."""
+
+
+def _peak_load_window(
+    conn: sqlite3.Connection, *, weeks_back: int
+) -> dict[str, Any]:
+    """Peak CTL/ATL and lowest TSB across the last ``weeks_back`` weeks."""
+    today = date.today()
+    start = (today - timedelta(weeks=weeks_back)).isoformat()
+    end = today.isoformat()
+    points = queries.get_load_curve(conn, start_date=start, end_date=end)
+    if not points:
+        return {"samples": 0}
+    ctls = [p.ctl for p in points if p.ctl is not None]
+    atls = [p.atl for p in points if p.atl is not None]
+    tsbs = [p.tsb for p in points if p.tsb is not None]
+    return {
+        "samples": len(points),
+        "peak_ctl": max(ctls) if ctls else None,
+        "peak_atl": max(atls) if atls else None,
+        "low_tsb": min(tsbs) if tsbs else None,
+        "latest_ctl": points[-1].ctl,
+        "latest_tsb": points[-1].tsb,
+    }
+
+
+def _athlete_tested_summary(*, root: Path | None = None) -> dict[str, Any]:
+    """Read knowledge/nutrition/athlete-tested.yaml — the ground-truth fueling log."""
+    base = root or plans.repo_root()
+    path = base / "knowledge" / "nutrition" / "athlete-tested.yaml"
+    if not path.is_file():
+        return {"entries": [], "exists": False}
+    with path.open(encoding="utf-8") as f:
+        doc = yaml.safe_load(f) or {}
+    entries = doc.get("entries") or []
+
+    tolerated_max_carbs_g_per_hr: float | None = None
+    failed_products: list[str] = []
+    tolerated_products: list[str] = []
+    for e in entries:
+        if not isinstance(e, dict):
+            continue
+        gut = e.get("gut_response")
+        totals = e.get("totals") or {}
+        carbs_per_hr = totals.get("carbs_g_per_hr")
+        products = [p.get("name") for p in (e.get("products") or []) if p.get("name")]
+        if isinstance(gut, (int, float)) and gut >= 4 and isinstance(carbs_per_hr, (int, float)):
+            if (
+                tolerated_max_carbs_g_per_hr is None
+                or carbs_per_hr > tolerated_max_carbs_g_per_hr
+            ):
+                tolerated_max_carbs_g_per_hr = float(carbs_per_hr)
+            tolerated_products.extend(products)
+        if isinstance(gut, (int, float)) and gut <= 2:
+            failed_products.extend(products)
+
+    return {
+        "exists": True,
+        "entries_count": len(entries),
+        "entries": entries,
+        "tolerated_max_carbs_g_per_hr": tolerated_max_carbs_g_per_hr,
+        "tolerated_products": sorted(set(tolerated_products)),
+        "failed_products": sorted(set(failed_products)),
+    }
+
+
+def race_plan_brief(
+    race_id: str | None = None,
+    *,
+    today: date | None = None,
+    within_days: int = 28,
+) -> dict[str, Any]:
+    """Assemble the brief for the draft-race-plan skill.
+
+    Args:
+        race_id: Explicit race id from athlete/race-calendar.yaml. If None,
+            picks the next A-priority race within ``within_days``.
+        today: Override for "today" (tests).
+        within_days: Search horizon for the auto-pick fallback.
+
+    Raises:
+        NoUpcomingRaceError: when no race is found.
+    """
+    today = today or date.today()
+
+    if race_id is not None:
+        race = _race_from_calendar(race_id)
+        if race is None:
+            raise NoUpcomingRaceError(
+                f"race {race_id!r} not found in athlete/race-calendar.yaml"
+            )
+    else:
+        race = _next_a_race(today, within_days)
+        if race is None:
+            raise NoUpcomingRaceError(
+                f"no A-priority race in athlete/race-calendar.yaml within {within_days} days"
+            )
+        race_id = race.get("id")
+
+    race_date = _parse_target_date(race.get("date") or race.get("target_date"))
+    days_until = (race_date - today).days if race_date else None
+    weeks_until = days_until // 7 if days_until is not None else None
+
+    found = plans.find_single_plan()
+    plan_id: str | None = None
+    plan_doc: dict[str, Any] = {}
+    taper_phase: dict[str, Any] | None = None
+    peak_phase: dict[str, Any] | None = None
+    if found:
+        plan_id, plan_doc = found
+        for phase in plan_doc.get("phases") or []:
+            phase_id = (phase.get("id") or "").lower()
+            if "taper" in phase_id:
+                taper_phase = phase
+            if "peak" in phase_id or "race" in phase_id:
+                peak_phase = phase
+
+    profile = athlete.load_profile()
+
+    eight_weeks_ago = today - timedelta(weeks=8)
+    db_error: str | None = None
+    last_8wk_adherence: list[dict[str, Any]] = []
+    load_window: dict[str, Any] = {"samples": 0}
+
+    try:
+        conn = connect()
+    except Exception as e:  # pragma: no cover — defensive
+        conn = None
+        db_error = f"could not open coach.db: {e}"
+
+    if conn is not None:
+        try:
+            init_schema(conn)
+            current_week_id = plans.week_id_for(today)
+            for back in range(8):
+                wid = plans.shift_week(current_week_id, weeks=-back)
+                rep = queries.get_adherence(conn, week_id=wid)
+                last_8wk_adherence.append(
+                    {
+                        "week_id": wid,
+                        "planned_count": rep.planned_count,
+                        "completed_count": rep.completed_count,
+                        "completion_pct": rep.completion_pct,
+                        "total_planned_tss": rep.total_planned_tss,
+                        "total_actual_tss": rep.total_actual_tss,
+                    }
+                )
+            load_window = _peak_load_window(conn, weeks_back=8)
+            if load_window.get("samples"):
+                load_window["window_start"] = eight_weeks_ago.isoformat()
+        finally:
+            conn.close()
+
+    nutrition = _athlete_tested_summary()
+
+    plan_dir_path = plans.plan_dir(plan_id) if plan_id else None
+    race_plan_path = plan_dir_path / "race-day-plan.md" if plan_dir_path else None
+
+    return {
+        "race": {
+            "id": race_id,
+            "title": race.get("title") or race.get("name"),
+            "date": race_date.isoformat() if race_date else None,
+            "distance": race.get("distance"),
+            "location": race.get("location"),
+            "expected_conditions": race.get("expected_conditions"),
+            "priority": race.get("priority"),
+            "notes": race.get("notes"),
+        },
+        "today": today.isoformat(),
+        "days_until_race": days_until,
+        "weeks_until_race": weeks_until,
+        "plan": {
+            "plan_id": plan_id,
+            "template": plan_doc.get("template"),
+            "peak_phase": peak_phase,
+            "taper_phase": taper_phase,
+        },
+        "athlete_state": _profile_summary(profile),
+        "active_injuries": athlete.active_injury_flags(),
+        "hard_constraints": athlete.hard_constraints(),
+        "recent_load": load_window,
+        "last_8wk_adherence": last_8wk_adherence,
+        "nutrition": nutrition,
+        "race_plan_path": str(race_plan_path) if race_plan_path else None,
+        "race_plan_exists": race_plan_path.is_file() if race_plan_path else False,
+        "db_error": db_error,
+    }
+
+
 __all__ = [
+    "IngestSourceError",
     "NoActivePlanError",
+    "NoUpcomingRaceError",
     "UnknownGoalError",
     "bootstrap_plan_brief",
+    "ingest_research_brief",
     "plan_week_brief",
+    "race_plan_brief",
     "review_week_brief",
 ]

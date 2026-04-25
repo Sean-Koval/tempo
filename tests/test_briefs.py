@@ -425,3 +425,183 @@ def test_review_week_brief_populates_from_db(
     assert brief["load_trajectory"]["end_ctl"] == pytest.approx(72.0)
     assert brief["load_trajectory"]["peak_atl"] == pytest.approx(85.0)
     assert brief["load_trajectory"]["low_tsb"] == pytest.approx(-13.0)
+
+
+# --- ingest_research_brief --------------------------------------------------
+
+_INGEST_HTML = """\
+<!doctype html>
+<html>
+<head>
+  <title>Asker Jeukendrup on multi-transportable carbohydrates</title>
+  <meta name="author" content="Asker Jeukendrup">
+  <meta property="article:published_time" content="2014-05-12">
+</head>
+<body>
+  <article>
+    <p>Combining glucose and fructose pushes carb oxidation above
+    the single-transporter ceiling.</p>
+  </article>
+</body>
+</html>
+"""
+
+
+def _seed_sources(tmp_path: Path) -> None:
+    knowledge = tmp_path / "knowledge"
+    knowledge.mkdir(exist_ok=True)
+    (knowledge / "sources.yaml").write_text(
+        "sources:\n"
+        "  - id: jeukendrup-mysportscience\n"
+        "    name: Asker Jeukendrup — mysportscience.com\n"
+        "    type: expert_blog\n"
+        "    credibility: peer_reviewed\n"
+        "    topics: [nutrition, carb_loading, in_race_fueling]\n"
+        "  - id: friel-blog\n"
+        "    name: Joe Friel's Blog\n"
+        "    credibility: expert_practitioner\n"
+        "    topics: [periodization]\n",
+        encoding="utf-8",
+    )
+
+
+def test_ingest_brief_local_pdf_succeeds(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """End-to-end on a real PDF — write one with pypdf, ingest it."""
+    pytest.importorskip("pypdf")
+    from pypdf import PdfWriter
+
+    _seed_sources(tmp_path)
+    _patch_roots(monkeypatch, tmp_path)
+
+    pdf_path = tmp_path / "friel-periodization.pdf"
+    writer = PdfWriter()
+    writer.add_blank_page(width=612, height=792)
+    writer.add_metadata({"/Title": "Friel periodization primer"})
+    with pdf_path.open("wb") as f:
+        writer.write(f)
+
+    from datetime import date
+    brief = briefs.ingest_research_brief(str(pdf_path), today=date(2026, 4, 25))
+
+    assert brief["source_kind"] == "pdf"
+    assert brief["detected_title"] == "Friel periodization primer"
+    assert brief["matched_source"]["id"] == "friel-blog"  # title token "friel"
+    assert brief["suggested_slug"] == "friel-periodization-primer"
+    assert brief["target_path"].endswith(".md")
+    assert "knowledge/research/" in brief["target_path"]
+    assert brief["duplicate_of"] is None
+    assert len(brief["source_sha256"]) == 64
+    assert brief["ingested"] == "2026-04-25"
+
+
+def test_ingest_brief_url_uses_mocked_http(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """URL path — patch fetch_url to avoid live HTTP."""
+    _seed_sources(tmp_path)
+    _patch_roots(monkeypatch, tmp_path)
+
+    monkeypatch.setattr(
+        "tempo.research.fetch_url",
+        lambda url, timeout=30.0: (_INGEST_HTML, "text/html"),
+    )
+
+    from datetime import date
+    brief = briefs.ingest_research_brief(
+        "https://www.mysportscience.com/post/multi-transportable-carbs",
+        today=date(2026, 4, 25),
+    )
+
+    assert brief["source_kind"] == "url"
+    assert brief["detected_title"] == "Asker Jeukendrup on multi-transportable carbohydrates"
+    assert brief["matched_source"]["id"] == "jeukendrup-mysportscience"
+    assert brief["matched_source"]["credibility"] == "peer_reviewed"
+    # Detected article date drives the YYYY/MM target dir.
+    assert "2014/05" in brief["target_path"]
+    assert brief["duplicate_of"] is None
+
+
+def test_ingest_brief_unvetted_when_no_match(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    _seed_sources(tmp_path)
+    _patch_roots(monkeypatch, tmp_path)
+
+    monkeypatch.setattr(
+        "tempo.research.fetch_url",
+        lambda url, timeout=30.0: (
+            "<html><head><title>Random Marketing</title></head>"
+            "<body><p>Buy our shaker bottle.</p></body></html>",
+            "text/html",
+        ),
+    )
+
+    brief = briefs.ingest_research_brief("https://nope.example/x")
+    assert brief["matched_source"] is None
+
+
+def test_ingest_brief_detects_duplicate(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    _seed_sources(tmp_path)
+    _patch_roots(monkeypatch, tmp_path)
+
+    monkeypatch.setattr(
+        "tempo.research.fetch_url",
+        lambda url, timeout=30.0: (_INGEST_HTML, "text/html"),
+    )
+
+    from datetime import date
+    first = briefs.ingest_research_brief(
+        "https://www.mysportscience.com/post/x",
+        today=date(2026, 4, 25),
+    )
+    # Plant a note containing that sha as if previously ingested.
+    note_dir = tmp_path / "knowledge" / "research" / "2014" / "05"
+    note_dir.mkdir(parents=True)
+    note_path = note_dir / "earlier.md"
+    note_path.write_text(
+        f"---\nsource_sha256: {first['source_sha256']}\n---\n# Earlier\n",
+        encoding="utf-8",
+    )
+
+    second = briefs.ingest_research_brief(
+        "https://www.mysportscience.com/post/x",
+        today=date(2026, 4, 25),
+    )
+    assert second["duplicate_of"] == "knowledge/research/2014/05/earlier.md"
+
+
+def test_ingest_brief_rejects_missing_file(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    _seed_sources(tmp_path)
+    _patch_roots(monkeypatch, tmp_path)
+    with pytest.raises(briefs.IngestSourceError, match="file not found"):
+        briefs.ingest_research_brief(str(tmp_path / "no-such.pdf"))
+
+
+def test_ingest_brief_rejects_unsupported_extension(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    _seed_sources(tmp_path)
+    _patch_roots(monkeypatch, tmp_path)
+    junk = tmp_path / "notes.txt"
+    junk.write_text("hi", encoding="utf-8")
+    with pytest.raises(briefs.IngestSourceError, match="unsupported local source"):
+        briefs.ingest_research_brief(str(junk))
+
+
+def test_ingest_brief_rejects_remote_pdf(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    _seed_sources(tmp_path)
+    _patch_roots(monkeypatch, tmp_path)
+    monkeypatch.setattr(
+        "tempo.research.fetch_url",
+        lambda url, timeout=30.0: ("%PDF-1.4 ...", "application/pdf"),
+    )
+    with pytest.raises(briefs.IngestSourceError, match="remote PDF"):
+        briefs.ingest_research_brief("https://example.com/paper.pdf")
