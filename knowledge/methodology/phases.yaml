@@ -83,3 +83,427 @@ rolling_base_block_12wk:
       weeks: 4
       goal: "bridge — introduce race-pace touches"
       key_sessions: [race_pace_bike, tempo_run, longer_long_ride]
+
+# ===========================================================================
+# Phase library — sport-tagged archetypes the composer chains together.
+#
+# Each entry is a building block. `tempo.composition.compose_chain` picks
+# from this library based on the goal sport, runway, and active injuries,
+# subject to `composition_rules` below.
+#
+# Fields:
+#   sport_focus            — relative weights summing to ~1.0
+#   character              — one-line phase intent
+#   duration_range         — [min_weeks, max_weeks]; composer picks within
+#   intensity_distribution — z1_z2 / z3 / z4_plus percentages
+#   weekly_tss_per_hour    — [low, high]; multiplied by athlete hours/wk
+#                            to produce weekly_tss_target ranges
+#   key_sessions           — library_refs (must exist in session-library.md
+#                            or be flagged as novel by the agent)
+#   valid_predecessors     — list of phase ids that may precede; null = chain start
+#   valid_successors       — list of phase ids that may follow;   null = chain end
+#   preconditions          — flags from athlete state required to enter:
+#                            "pt_clearance", "no_active_run_injury",
+#                            "active_injury_no_run", "active_injury_no_impact"
+# ===========================================================================
+phase_library:
+
+  # ---- RUN -----------------------------------------------------------------
+  prep_run:
+    sport_focus: { run: 0.7, strength: 0.3 }
+    character: "anatomical adaptation, low-intensity run foundation"
+    duration_range: [2, 4]
+    intensity_distribution: { z1_z2: 90, z3: 8, z4_plus: 2 }
+    weekly_tss_per_hour: [45, 55]
+    key_sessions: [easy_aerobic_run, hill_strides, strength_foundation]
+    valid_predecessors: [null]
+    valid_successors: [base_aerobic_run]
+    preconditions: [no_active_run_injury]
+
+  base_aerobic_run:
+    sport_focus: { run: 0.75, strength: 0.25 }
+    character: "high-volume Z2 run, aerobic capacity, durability"
+    duration_range: [3, 12]
+    intensity_distribution: { z1_z2: 85, z3: 10, z4_plus: 5 }
+    weekly_tss_per_hour: [55, 70]
+    key_sessions: [long_run_z2, easy_aerobic_run, cruise_interval_run, strength_foundation]
+    valid_predecessors: [null, prep_run, base_aerobic_run, return_to_run]
+    valid_successors: [base_aerobic_run, base_durability_run, build_run]
+    preconditions: [no_active_run_injury]
+
+  base_durability_run:
+    sport_focus: { run: 0.8, strength: 0.2 }
+    character: "durability + introduce tempo / hills"
+    duration_range: [3, 8]
+    intensity_distribution: { z1_z2: 80, z3: 15, z4_plus: 5 }
+    weekly_tss_per_hour: [60, 75]
+    key_sessions: [long_run_z2, tempo_run, hill_strides, cruise_interval_run]
+    valid_predecessors: [base_aerobic_run]
+    valid_successors: [build_run]
+    preconditions: [no_active_run_injury]
+
+  build_run:
+    sport_focus: { run: 0.8, strength: 0.2 }
+    character: "race-specific intensity and pacing"
+    duration_range: [3, 8]
+    intensity_distribution: { z1_z2: 75, z3: 15, z4_plus: 10 }
+    weekly_tss_per_hour: [60, 75]
+    key_sessions: [threshold_run, tempo_run, race_pace_run]
+    valid_predecessors: [base_durability_run, base_aerobic_run]
+    valid_successors: [peak_run, taper_run]
+    preconditions: [no_active_run_injury]
+
+  peak_run:
+    sport_focus: { run: 0.85, strength: 0.15 }
+    character: "sharpening + race simulation"
+    duration_range: [1, 3]
+    intensity_distribution: { z1_z2: 75, z3: 15, z4_plus: 10 }
+    weekly_tss_per_hour: [55, 70]
+    key_sessions: [race_pace_run, tune_up_race]
+    valid_predecessors: [build_run]
+    valid_successors: [taper_run]
+    preconditions: [no_active_run_injury]
+
+  taper_run:
+    sport_focus: { run: 0.9, strength: 0.1 }
+    character: "freshen without detraining"
+    duration_range: [1, 2]
+    intensity_distribution: { z1_z2: 80, z3: 15, z4_plus: 5 }
+    weekly_tss_per_hour: [35, 50]
+    key_sessions: [race_week_primer_run, short_race_pace_opener]
+    valid_predecessors: [peak_run, build_run]
+    valid_successors: [null]
+    preconditions: [no_active_run_injury]
+
+  return_to_run:
+    sport_focus: { run: 0.4, bike: 0.4, strength: 0.2 }
+    character: "phased run re-entry, walk-jog progression"
+    duration_range: [2, 6]
+    intensity_distribution: { z1_z2: 95, z3: 5, z4_plus: 0 }
+    weekly_tss_per_hour: [45, 55]
+    key_sessions: [return_to_run_walk_jog, easy_aerobic_ride, strength_foundation]
+    valid_predecessors: [rehab_bike_only]
+    valid_successors: [base_aerobic_run, base_aerobic_multisport]
+    preconditions: [pt_clearance]
+
+  # ---- BIKE ----------------------------------------------------------------
+  prep_bike:
+    sport_focus: { bike: 0.75, strength: 0.25 }
+    character: "anatomical adaptation, technique, low-intensity Z2 base"
+    duration_range: [2, 4]
+    intensity_distribution: { z1_z2: 90, z3: 8, z4_plus: 2 }
+    weekly_tss_per_hour: [50, 60]
+    key_sessions: [easy_aerobic_ride, strength_foundation]
+    valid_predecessors: [null]
+    valid_successors: [base_aerobic_bike]
+    preconditions: []
+
+  base_aerobic_bike:
+    sport_focus: { bike: 0.8, strength: 0.2 }
+    character: "high-volume Z2 bike, aerobic capacity"
+    duration_range: [4, 12]
+    intensity_distribution: { z1_z2: 85, z3: 10, z4_plus: 5 }
+    weekly_tss_per_hour: [55, 70]
+    key_sessions: [long_ride_z2, easy_aerobic_ride, tempo_bike_block, strength_foundation]
+    valid_predecessors: [null, prep_bike, base_aerobic_bike, rehab_bike_only]
+    valid_successors: [base_aerobic_bike, base_durability_bike, build_bike]
+    preconditions: []
+
+  base_durability_bike:
+    sport_focus: { bike: 0.85, strength: 0.15 }
+    character: "durability + sweet-spot / tempo blocks"
+    duration_range: [3, 8]
+    intensity_distribution: { z1_z2: 80, z3: 15, z4_plus: 5 }
+    weekly_tss_per_hour: [60, 80]
+    key_sessions: [long_ride_z2, tempo_bike_block, threshold_bike]
+    valid_predecessors: [base_aerobic_bike]
+    valid_successors: [build_bike]
+    preconditions: []
+
+  build_bike:
+    sport_focus: { bike: 0.85, strength: 0.15 }
+    character: "race-specific bike intensity and pacing"
+    duration_range: [3, 8]
+    intensity_distribution: { z1_z2: 75, z3: 15, z4_plus: 10 }
+    weekly_tss_per_hour: [65, 85]
+    key_sessions: [threshold_bike, race_pace_bike, longer_long_ride]
+    valid_predecessors: [base_durability_bike, base_aerobic_bike]
+    valid_successors: [peak_bike, taper_bike]
+    preconditions: []
+
+  peak_bike:
+    sport_focus: { bike: 0.9, strength: 0.1 }
+    character: "sharpening + race simulation"
+    duration_range: [1, 3]
+    intensity_distribution: { z1_z2: 75, z3: 15, z4_plus: 10 }
+    weekly_tss_per_hour: [60, 80]
+    key_sessions: [race_pace_bike, tune_up_race]
+    valid_predecessors: [build_bike]
+    valid_successors: [taper_bike]
+    preconditions: []
+
+  taper_bike:
+    sport_focus: { bike: 0.95, strength: 0.05 }
+    character: "freshen for bike-event race day"
+    duration_range: [1, 2]
+    intensity_distribution: { z1_z2: 80, z3: 15, z4_plus: 5 }
+    weekly_tss_per_hour: [35, 50]
+    key_sessions: [easy_spin, short_race_pace_opener]
+    valid_predecessors: [peak_bike, build_bike]
+    valid_successors: [null]
+    preconditions: []
+
+  rehab_bike_only:
+    sport_focus: { bike: 0.8, strength: 0.2 }
+    character: "injury recovery; bike + strength only, low-impact"
+    duration_range: [4, 12]
+    intensity_distribution: { z1_z2: 95, z3: 5, z4_plus: 0 }
+    weekly_tss_per_hour: [40, 55]
+    key_sessions: [easy_aerobic_ride, strength_foundation]
+    valid_predecessors: [null]
+    valid_successors: [return_to_run, return_to_3sport, base_aerobic_bike]
+    preconditions: [active_injury_no_impact]
+
+  # ---- SWIM ----------------------------------------------------------------
+  base_aerobic_swim:
+    sport_focus: { swim: 0.7, strength: 0.3 }
+    character: "swim volume + technique foundation"
+    duration_range: [3, 10]
+    intensity_distribution: { z1_z2: 80, z3: 15, z4_plus: 5 }
+    weekly_tss_per_hour: [40, 55]
+    key_sessions: [aerobic_swim_set, technique_swim, strength_foundation]
+    valid_predecessors: [null, base_aerobic_swim]
+    valid_successors: [base_aerobic_swim, build_swim]
+    preconditions: []
+
+  build_swim:
+    sport_focus: { swim: 0.75, strength: 0.25 }
+    character: "race-pace swim sets, sustained effort"
+    duration_range: [3, 6]
+    intensity_distribution: { z1_z2: 70, z3: 20, z4_plus: 10 }
+    weekly_tss_per_hour: [50, 65]
+    key_sessions: [race_pace_swim, aerobic_swim_set]
+    valid_predecessors: [base_aerobic_swim]
+    valid_successors: [peak_swim, taper_swim]
+    preconditions: []
+
+  peak_swim:
+    sport_focus: { swim: 0.85, strength: 0.15 }
+    character: "sharpening for the meet/event"
+    duration_range: [1, 2]
+    intensity_distribution: { z1_z2: 70, z3: 20, z4_plus: 10 }
+    weekly_tss_per_hour: [45, 60]
+    key_sessions: [race_pace_swim]
+    valid_predecessors: [build_swim]
+    valid_successors: [taper_swim]
+    preconditions: []
+
+  taper_swim:
+    sport_focus: { swim: 0.9, strength: 0.1 }
+    character: "freshen for swim race day"
+    duration_range: [1, 2]
+    intensity_distribution: { z1_z2: 80, z3: 15, z4_plus: 5 }
+    weekly_tss_per_hour: [30, 45]
+    key_sessions: [technique_swim]
+    valid_predecessors: [peak_swim, build_swim]
+    valid_successors: [null]
+    preconditions: []
+
+  # ---- MULTISPORT (triathlon) ---------------------------------------------
+  base_aerobic_multisport:
+    sport_focus: { bike: 0.45, run: 0.25, swim: 0.20, strength: 0.10 }
+    character: "balanced 3-sport aerobic base"
+    duration_range: [4, 12]
+    intensity_distribution: { z1_z2: 85, z3: 10, z4_plus: 5 }
+    weekly_tss_per_hour: [55, 70]
+    key_sessions: [long_ride_z2, long_run_z2, aerobic_swim_set, strength_foundation]
+    valid_predecessors: [null, prep_bike, return_to_3sport, rehab_bike_only]
+    valid_successors: [base_durability_multisport, build_multisport]
+    preconditions: [no_active_run_injury]
+
+  base_durability_multisport:
+    sport_focus: { bike: 0.45, run: 0.25, swim: 0.20, strength: 0.10 }
+    character: "tri durability + introduce tempo bike + brick exposure"
+    duration_range: [3, 8]
+    intensity_distribution: { z1_z2: 80, z3: 15, z4_plus: 5 }
+    weekly_tss_per_hour: [60, 80]
+    key_sessions: [tempo_bike_block, cruise_interval_run, brick_run_off_bike, aerobic_swim_set]
+    valid_predecessors: [base_aerobic_multisport]
+    valid_successors: [build_multisport]
+    preconditions: [no_active_run_injury]
+
+  build_multisport:
+    sport_focus: { bike: 0.45, run: 0.25, swim: 0.20, strength: 0.10 }
+    character: "race-specific tri intensity, brick density"
+    duration_range: [3, 8]
+    intensity_distribution: { z1_z2: 75, z3: 15, z4_plus: 10 }
+    weekly_tss_per_hour: [65, 85]
+    key_sessions: [race_pace_bike, threshold_run, brick_run_off_bike, race_pace_swim]
+    valid_predecessors: [base_durability_multisport, base_aerobic_multisport]
+    valid_successors: [peak_multisport, taper_multisport]
+    preconditions: [no_active_run_injury]
+
+  peak_multisport:
+    sport_focus: { bike: 0.45, run: 0.25, swim: 0.20, strength: 0.10 }
+    character: "tri sharpening + race sim brick + fueling rehearsal"
+    duration_range: [1, 4]
+    intensity_distribution: { z1_z2: 75, z3: 15, z4_plus: 10 }
+    weekly_tss_per_hour: [55, 75]
+    key_sessions: [race_sim_brick, race_day_fueling_rehearsal, tune_up_race]
+    valid_predecessors: [build_multisport]
+    valid_successors: [taper_multisport]
+    preconditions: [no_active_run_injury]
+
+  taper_multisport:
+    sport_focus: { bike: 0.45, run: 0.25, swim: 0.20, strength: 0.10 }
+    character: "tri taper — vol down, intensity exposure preserved"
+    duration_range: [1, 3]
+    intensity_distribution: { z1_z2: 80, z3: 15, z4_plus: 5 }
+    weekly_tss_per_hour: [35, 55]
+    key_sessions: [short_race_pace_opener, race_week_primer_run, easy_spin]
+    valid_predecessors: [peak_multisport, build_multisport]
+    valid_successors: [null]
+    preconditions: [no_active_run_injury]
+
+  return_to_3sport:
+    sport_focus: { bike: 0.5, run: 0.2, swim: 0.2, strength: 0.1 }
+    character: "phased swim + walk/jog re-entry on top of bike base"
+    duration_range: [3, 6]
+    intensity_distribution: { z1_z2: 90, z3: 8, z4_plus: 2 }
+    weekly_tss_per_hour: [45, 55]
+    key_sessions: [return_to_run_walk_jog, technique_swim, easy_aerobic_ride, strength_foundation]
+    valid_predecessors: [rehab_bike_only]
+    valid_successors: [base_aerobic_multisport]
+    preconditions: [pt_clearance]
+
+
+# ===========================================================================
+# Composition rules — gates the composer enforces (or flags) when assembling
+# a chain. HARD rules block; SOFT rules require an override rationale.
+# ===========================================================================
+composition_rules:
+  - id: chain_must_end_taper_for_a_race
+    description: "Chain targeting a dated A-race must end with a taper phase."
+    severity: HARD
+
+  - id: peak_requires_preceding_build
+    description: "A peak phase must be preceded directly by a build phase."
+    severity: HARD
+
+  - id: taper_max_duration_3wk
+    description: "Taper phase must be <= 3 weeks."
+    severity: HARD
+
+  - id: build_requires_base_total_6wk
+    description: "Build phase must be preceded by base phases totaling >= 6 weeks."
+    severity: HARD
+
+  - id: rehab_requires_active_injury
+    description: "Any rehab_* or return_to_* phase requires an active injury flag."
+    severity: HARD
+
+  - id: predecessor_succession_valid
+    description: "Each phase's predecessor must appear in its valid_predecessors list."
+    severity: HARD
+
+
+# ===========================================================================
+# Named templates — sport-specific composed chains. Bootstrap-plan picks one
+# of these by distance + sport_focus, or composes ad-hoc via the library.
+# ===========================================================================
+templates:
+
+  # Run-only events
+  marathon_18wk:
+    distance: marathon
+    sport_focus: { run: 0.8, strength: 0.2 }
+    chain:
+      - { phase: prep_run,            weeks: 3 }
+      - { phase: base_aerobic_run,    weeks: 6 }
+      - { phase: base_durability_run, weeks: 4 }
+      - { phase: build_run,           weeks: 3 }
+      - { phase: peak_run,            weeks: 1 }
+      - { phase: taper_run,           weeks: 1 }
+
+  half_marathon_12wk:
+    distance: half_marathon
+    sport_focus: { run: 0.8, strength: 0.2 }
+    chain:
+      - { phase: base_aerobic_run,    weeks: 4 }
+      - { phase: base_durability_run, weeks: 3 }
+      - { phase: build_run,           weeks: 3 }
+      - { phase: peak_run,            weeks: 1 }
+      - { phase: taper_run,           weeks: 1 }
+
+  five_k_8wk:
+    distance: 5k
+    sport_focus: { run: 0.8, strength: 0.2 }
+    chain:
+      - { phase: base_aerobic_run,    weeks: 3 }
+      - { phase: build_run,           weeks: 3 }
+      - { phase: peak_run,            weeks: 1 }
+      - { phase: taper_run,           weeks: 1 }
+
+  # Bike-only events
+  gran_fondo_12wk:
+    distance: gran_fondo
+    sport_focus: { bike: 0.85, strength: 0.15 }
+    chain:
+      - { phase: base_aerobic_bike,    weeks: 4 }
+      - { phase: base_durability_bike, weeks: 4 }
+      - { phase: build_bike,           weeks: 2 }
+      - { phase: peak_bike,            weeks: 1 }
+      - { phase: taper_bike,           weeks: 1 }
+
+  road_race_10wk:
+    distance: road_race
+    sport_focus: { bike: 0.85, strength: 0.15 }
+    chain:
+      - { phase: base_aerobic_bike,    weeks: 3 }
+      - { phase: base_durability_bike, weeks: 3 }
+      - { phase: build_bike,           weeks: 2 }
+      - { phase: peak_bike,            weeks: 1 }
+      - { phase: taper_bike,           weeks: 1 }
+
+  # Swim-only events
+  masters_swim_meet_8wk:
+    distance: masters_swim_meet
+    sport_focus: { swim: 0.85, strength: 0.15 }
+    chain:
+      - { phase: base_aerobic_swim, weeks: 4 }
+      - { phase: build_swim,        weeks: 2 }
+      - { phase: peak_swim,         weeks: 1 }
+      - { phase: taper_swim,        weeks: 1 }
+
+  # Multisport (matches the existing ironman_full_24wk / ironman_half_16wk
+  # templates above; redeclared here so the composer can pick them by name).
+  triathlon_olympic_12wk:
+    distance: olympic
+    sport_focus: { bike: 0.45, run: 0.25, swim: 0.20, strength: 0.10 }
+    chain:
+      - { phase: base_aerobic_multisport,    weeks: 5 }
+      - { phase: base_durability_multisport, weeks: 3 }
+      - { phase: build_multisport,           weeks: 2 }
+      - { phase: peak_multisport,            weeks: 1 }
+      - { phase: taper_multisport,           weeks: 1 }
+
+  triathlon_half_16wk:
+    distance: half_ironman
+    sport_focus: { bike: 0.45, run: 0.25, swim: 0.20, strength: 0.10 }
+    chain:
+      - { phase: base_aerobic_multisport,    weeks: 4 }
+      - { phase: base_durability_multisport, weeks: 4 }
+      - { phase: build_multisport,           weeks: 4 }
+      - { phase: peak_multisport,            weeks: 2 }
+      - { phase: taper_multisport,           weeks: 2 }
+
+  triathlon_full_24wk:
+    distance: ironman
+    sport_focus: { bike: 0.45, run: 0.25, swim: 0.20, strength: 0.10 }
+    chain:
+      - { phase: prep_bike,                  weeks: 4 }
+      - { phase: base_aerobic_multisport,    weeks: 6 }
+      - { phase: base_durability_multisport, weeks: 4 }
+      - { phase: build_multisport,           weeks: 6 }
+      - { phase: peak_multisport,            weeks: 2 }
+      - { phase: taper_multisport,           weeks: 2 }

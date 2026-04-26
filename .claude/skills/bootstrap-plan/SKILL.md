@@ -51,16 +51,43 @@ kind. Example queries:
 Prefer snippets with `credibility: peer_reviewed` or `expert_practitioner`.
 Flag any `unvetted` snippet you use.
 
-## Step 4 — Pick and adapt the phase template
+## Step 4 — Compose the phase chain
 
-- Use `applicable_phase_template` from the brief if present.
-- If absent (agent-decide case), pick from `knowledge/methodology/phases.yaml`
-  based on goal kind and runway. If runway is shorter than the template's
-  `total_weeks`, compress proportionally — explain the compression in the
-  rationale.
-- If `weeks_until_target` is longer than the template, either extend the base
-  phase or add a maintenance block before the template starts. Document
-  which and why.
+Use `tempo.composition.compose_chain` rather than picking a template by
+hand. It walks `knowledge/methodology/phases.yaml` (`phase_library` +
+`composition_rules` + `templates`) and returns a typed `PhaseChain` valid
+against every HARD composition rule.
+
+```python
+from tempo import composition
+
+chain = composition.compose_chain(
+    distance=goal["distance"],         # "marathon" | "half_ironman" | "gran_fondo" | ...
+    runway_weeks=brief["weeks_until_target"],
+    has_target_date=goal.get("date") is not None,
+    # Map brief['active_injuries'] descriptions into known type tags:
+    # 'BSI', 'stress_fracture', 'calf_strain', 'achilles', 'plantar_fasciitis',
+    # 'itbs', 'lower_back'. See _INJURY_PRECONDITION_BY_TYPE in composition.py
+    # for the current mapping; unknown tags map to no preconditions.
+    active_injury_types=injury_types_from_flags(brief["active_injuries"]),
+)
+```
+
+The composer covers run-only (5K, 10K, half-marathon, marathon),
+bike-only (gran fondo, road race), swim-only (masters meet), and
+multisport (Olympic, 70.3, IM) distances. Active injuries that map to
+`active_injury_no_impact` (e.g. BSI, stress fracture) automatically
+prepend `rehab_bike_only` + an appropriate `return_to_*` phase.
+
+If the runway exceeds the template, the composer extends the earliest
+base phase rather than diluting build/peak. If a distance isn't covered,
+it raises `CompositionError` — surface this to Sean and recommend either
+picking a closer distance or filing a ticket to add a template entry.
+
+Use the returned `chain.phases` to populate `plan.yaml`'s `phases:`
+block. The composer fills in `intensity_distribution`, `weekly_tss_per_hour`,
+`key_sessions`, and `sport_focus` from the library, so you don't have to
+restate them.
 
 ## Step 5 — Compose the artifacts
 
