@@ -213,6 +213,80 @@ def doctor_cmd() -> None:
         raise typer.Exit(code=1)
 
 
+@app.command("research-gap")
+def research_gap_cmd(
+    query: str = typer.Argument(..., help="What you wish you had local knowledge on."),
+    topic: str = typer.Option(
+        "",
+        "--topic",
+        help="Optional sources.yaml topic filter (e.g. 'injury', 'nutrition').",
+    ),
+    k: int = typer.Option(5, "--k", help="Max suggestions to print."),
+) -> None:
+    """Detect insufficient local coverage and propose trusted-source queries.
+
+    Runs a knowledge search, computes confidence (n_hits, max_score,
+    credibility distribution), and either shows the local hits if they
+    pass the bar or prints site-scoped queries against sources.yaml for
+    you to paste into a browser. Approved URLs go through /ingest-research.
+
+    No web fetch happens here — this is a suggestion surface, not an
+    autonomous researcher.
+    """
+    from .gap_search import (
+        KnowledgeGap,
+        detect_gap,
+        suggest_research_queries,
+    )
+
+    topic_arg = topic or None
+    result = detect_gap(query, topic=topic_arg)
+
+    if not isinstance(result, KnowledgeGap):
+        hits, confidence = result
+        console.print(
+            f"[green]Local knowledge sufficient[/green] — "
+            f"{confidence.n_hits} hits, max_score {confidence.max_score:.2f}, "
+            f"mean credibility rank {confidence.mean_credibility_rank:.1f}."
+        )
+        table = Table(title=f"Top hits for {query!r}", show_header=True, header_style="bold")
+        for col in ("Score", "Credibility", "Path", "Snippet"):
+            table.add_column(col)
+        for h in hits:
+            preview = h.text.replace("\n", " ")[:80]
+            table.add_row(f"{h.score:.3f}", h.credibility, h.path, preview + "…")
+        console.print(table)
+        return
+
+    gap = result
+    console.print(
+        f"[yellow]Knowledge gap[/yellow] — reason: [bold]{gap.reason}[/bold] "
+        f"(n_hits={gap.confidence.n_hits}, max_score={gap.confidence.max_score:.2f}, "
+        f"mean credibility rank={gap.confidence.mean_credibility_rank:.1f})."
+    )
+
+    suggestions = suggest_research_queries(gap, k=k)
+    if not suggestions:
+        console.print("[red]No matching sources in sources.yaml[/red] — consider adding one.")
+        raise typer.Exit(code=2)
+
+    console.print(
+        "[dim]Paste any of these into your browser; URLs that look credible "
+        "go through /ingest-research:[/dim]"
+    )
+    table = Table(show_header=True, header_style="bold")
+    for col in ("#", "Credibility", "Source", "Suggested query"):
+        table.add_column(col)
+    for i, sug in enumerate(suggestions, start=1):
+        table.add_row(
+            str(i),
+            sug.credibility,
+            sug.source_name,
+            sug.query,
+        )
+    console.print(table)
+
+
 @app.command("check-in")
 def check_in_cmd(
     for_date: str = typer.Option(

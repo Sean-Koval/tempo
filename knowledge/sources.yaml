@@ -21,6 +21,7 @@ sources:
     type: blog
     credibility: expert_practitioner
     topics: [periodization, masters_athletes, planning]
+    domain: joefrielsblog.com
 
   - id: seiler-polarized
     name: "Stephen Seiler — polarized training research"
@@ -33,18 +34,21 @@ sources:
     type: expert_blog
     credibility: expert_practitioner
     topics: [run_physiology, threshold, durability]
+    domain: stevemagness.com
 
   - id: cts-blog
     name: "Carmichael Training Systems — trainright.com"
     type: blog
     credibility: expert_practitioner
     topics: [ironman, cycling, pacing, endurance]
+    domain: trainright.com
 
   - id: couzens-endurance-corner
     name: "Alan Couzens — alancouzens.com"
     type: expert_blog
     credibility: expert_practitioner
     topics: [ironman, aerobic_development, data_driven_coaching]
+    domain: alancouzens.com
 
   - id: fitzgerald-80-20
     name: "Matt Fitzgerald — 80/20 Running & Endurance"
@@ -63,6 +67,7 @@ sources:
     type: blog
     credibility: expert_practitioner
     topics: [tss, ctl_atl_tsb, ironman, periodization]
+    domain: trainingpeaks.com
 
   # ---- Nutrition ----
   - id: jeukendrup-mysportscience
@@ -70,6 +75,7 @@ sources:
     type: expert_blog
     credibility: peer_reviewed
     topics: [nutrition, carb_loading, in_race_fueling, gut_training]
+    domain: mysportscience.com
 
   - id: burke-clinical-sports-nutrition
     name: "Louise Burke — Clinical Sports Nutrition"
@@ -116,12 +122,21 @@ sources:
     type: academic_database
     credibility: peer_reviewed
     topics: [everything]
+    domain: pubmed.ncbi.nlm.nih.gov
 
   - id: scholar
     name: "Google Scholar"
     type: academic_database
     credibility: peer_reviewed
     topics: [everything]
+    domain: scholar.google.com
+
+  - id: bjsm
+    name: "British Journal of Sports Medicine"
+    type: academic_database
+    credibility: peer_reviewed
+    topics: [everything, injury, rehabilitation, return_to_sport, bone_stress, plantar_fasciitis, itbs]
+    domain: bjsm.bmj.com
 
   # ---- Podcasts (context, not primary) ----
   - id: endurance-innovation
