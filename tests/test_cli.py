@@ -38,16 +38,34 @@ def _seed_week_progress(c: sqlite3.Connection) -> None:
     c.execute(
         "INSERT INTO sessions_planned(id, plan_id, week_id, date, sport, library_ref, "
         "target_tss, target_duration_s, purpose) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
-        ("sp1", "plan-a", week_id, monday.isoformat(), "bike", "endurance-2h", 95, 7200, "aerobic_base"),
+        (
+            "sp1",
+            "plan-a",
+            week_id,
+            monday.isoformat(),
+            "bike",
+            "endurance-2h",
+            95,
+            7200,
+            "aerobic_base",
+        ),
     )
     c.execute(
         "INSERT INTO sessions_planned(id, plan_id, week_id, date, sport, library_ref, "
         "target_tss, target_duration_s, purpose) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
-        ("sp2", "plan-a", week_id, (monday + timedelta(days=1)).isoformat(), "run", "z2-45min", 40, 2700, "aerobic_base"),
+        (
+            "sp2",
+            "plan-a",
+            week_id,
+            (monday + timedelta(days=1)).isoformat(),
+            "run",
+            "z2-45min",
+            40,
+            2700,
+            "aerobic_base",
+        ),
     )
-    c.execute(
-        "INSERT INTO adherence(planned_session_id, completed) VALUES ('sp1', 1)"
-    )
+    c.execute("INSERT INTO adherence(planned_session_id, completed) VALUES ('sp1', 1)")
 
 
 def _seed_load_and_wellness(c: sqlite3.Connection) -> None:
@@ -77,7 +95,7 @@ def test_status_shows_week_progress(seeded_db):
     assert result.exit_code == 0
     iso_year, iso_week, _ = date.today().isocalendar()
     assert f"{iso_year}-W{iso_week:02d}" in result.stdout
-    assert "1/2 completed" in result.stdout
+    assert "1/2 sessions" in result.stdout
 
 
 def test_status_without_load(tmp_data_dir: Path):
@@ -86,18 +104,34 @@ def test_status_without_load(tmp_data_dir: Path):
     c.close()
     result = runner.invoke(app, ["status"])
     assert result.exit_code == 0
-    assert "No load data" in result.stdout
+    assert "no load data" in result.stdout.lower()
+
+
+def test_status_json_round_trip(seeded_db):
+    import json as _json
+
+    result = runner.invoke(app, ["status", "--json"])
+    assert result.exit_code == 0
+    payload = _json.loads(result.stdout)
+    assert payload["as_of"]
+    assert payload["adherence"]["completed_count"] == 1
+
+
+def test_status_week_flag_lists_sessions(seeded_db, monkeypatch):
+    monkeypatch.setenv("COLUMNS", "200")
+    result = runner.invoke(app, ["status", "--week"])
+    assert result.exit_code == 0
+    assert "endurance-2h" in result.stdout
 
 
 def test_push_week_dry_runs(seeded_db, monkeypatch):
     monkeypatch.setenv("COLUMNS", "200")
     iso_year, iso_week, _ = date.today().isocalendar()
     week_id = f"{iso_year}-W{iso_week:02d}"
-    result = runner.invoke(app, ["push-week", week_id])
+    result = runner.invoke(app, ["push-week", week_id, "--dry-run"])
     assert result.exit_code == 0
     assert "DRY RUN" in result.stdout
     assert "endurance-2h" in result.stdout
-    assert "dry-run" in result.stdout.lower()
 
 
 def test_push_week_empty(tmp_data_dir: Path):

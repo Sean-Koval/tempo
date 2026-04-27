@@ -1,13 +1,24 @@
 """Tempo ``coach`` CLI entrypoint.
 
-Phase 1 verbs (deterministic):
-- ``coach sync``     — fetch activities/wellness, upsert coach.db, re-derive.
-- ``coach status``   — print current CTL/ATL/TSB + week progress + wellness.
-- ``coach push-week``— dry-run preview of planned sessions (real push lands
-  with Phase 4 skills).
+Deterministic verbs:
+- ``coach sync``       — pull intervals data → coach.db → derive load.
+- ``coach status``     — single-pane current state (plan + week + load
+  + wellness + calibration debt + sync freshness + injury flags).
+- ``coach push-week``  — idempotent upsert of planned sessions to
+  intervals.icu, with conflict detection + post-write verify.
+- ``coach plan amend`` — atomic plan amendments (shift-target,
+  switch-target, insert-test). Each writes a single commit-worthy diff
+  across plan.yaml + goal.yaml + changelog.md + decisions row.
+- ``coach week amend-session`` — single-session amendment with auto
+  changelog + log_decision.
+- ``coach doctor``     — preflight; enumerates calibration debt.
+- ``coach check-in``   — morning wellness capture.
+- ``coach vectors *``  — knowledge / sessions / memory embedding rebuilds.
+- ``coach dashboard *``— render HTML coaching dashboards.
 
-Agentic verbs (``plan week``, ``review week``, ``bootstrap-plan``, ``research``,
-``ingest``, ``draft-race-plan``, ``check-in``) land with Phase 4+ skills.
+Agentic verbs (``/plan-training-week``, ``/review-week``, ``/bootstrap-plan``,
+``/draft-race-plan``, ``/ingest-research``, ``/morning-check-in``) live in
+``.claude/skills/`` and are invoked through Claude Code as slash commands.
 """
 
 from __future__ import annotations
@@ -21,10 +32,6 @@ from .db import connect, init_schema
 from .derive import derive
 from .display import (
     console,
-    print_active_injuries,
-    print_load,
-    print_week,
-    print_wellness,
 )
 from .sync import sync
 
@@ -46,6 +53,26 @@ dashboard_app = typer.Typer(
     no_args_is_help=True,
 )
 app.add_typer(dashboard_app)
+
+plan_app = typer.Typer(
+    name="plan",
+    help="Plan-level operations (amendments, recompose, etc.).",
+    no_args_is_help=True,
+)
+app.add_typer(plan_app)
+plan_amend_app = typer.Typer(
+    name="amend",
+    help="Atomic plan amendments — date shifts, race switches, test inserts.",
+    no_args_is_help=True,
+)
+plan_app.add_typer(plan_amend_app)
+
+week_app = typer.Typer(
+    name="week",
+    help="Week-level operations (per-session amendments).",
+    no_args_is_help=True,
+)
+app.add_typer(week_app)
 
 
 def main() -> None:
@@ -84,77 +111,183 @@ def sync_cmd(
 
 
 @app.command("status")
-def status_cmd() -> None:
-    """Show current CTL/ATL/TSB, week progress, and latest wellness."""
+def status_cmd(
+    week: bool = typer.Option(
+        False,
+        "--week",
+        help="Append the current week's session list to the snapshot.",
+    ),
+    json_out: bool = typer.Option(
+        False,
+        "--json",
+        help="Emit the snapshot as JSON instead of a Rich table (for scripts).",
+    ),
+) -> None:
+    """One-screen current state: plan + phase + week + load + wellness + debt + sync.
+
+    Severities: ``green`` everything's on track; ``yellow`` worth a glance;
+    ``red`` action recommended (stale sync, large CTL drift, active injury).
+    """
+    from .status import build_snapshot, render
+
     conn = connect()
     try:
         init_schema(conn)
-        print_load(conn)
-        print_week(conn)
-        print_wellness(conn)
+        snap = build_snapshot(conn=conn)
     finally:
         conn.close()
 
-    print_active_injuries()
+    if json_out:
+        console.print_json(snap.to_json())
+        return
+
+    console.print(render(snap, show_week_sessions=week))
 
 
 @app.command("push-week")
 def push_week_cmd(
     week_id: str = typer.Argument(..., help="Week identifier, e.g. 2026-W17."),
+    dry_run: bool = typer.Option(
+        False,
+        "--dry-run",
+        help="Preview the events + any conflicts without writing.",
+    ),
+    no_verify: bool = typer.Option(
+        False,
+        "--no-verify",
+        help="Skip the post-write re-fetch + diff (default: verify on).",
+    ),
+    force_overwrite: bool = typer.Option(
+        False,
+        "--force-overwrite",
+        help="Proceed past conflicts (manually-created events) without prompting.",
+    ),
+    yes: bool = typer.Option(
+        False,
+        "--yes",
+        "-y",
+        help="Don't prompt before writing — useful for scripted invocations.",
+    ),
 ) -> None:
-    """DRY RUN: preview planned sessions for <week_id>.
+    """Push the week's planned sessions to intervals.icu, idempotently.
 
-    Real push to intervals.icu lands in Phase 4 once the planning skills
-    exist and generate sessions_planned rows.
+    Default behavior:
+    1. Fetch the week's existing events.
+    2. Detect conflicts (manually-created events in planned slots).
+    3. Prompt unless ``--force-overwrite`` or ``--yes``.
+    4. Upsert each planned session by ``external_id = "<plan_id>/<session_id>"``.
+    5. Re-fetch and diff (skip with ``--no-verify``).
+    6. Append a summary line to ``data/events.jsonl``.
+
+    Exit codes: 0 on clean push, 1 on verification mismatches, 2 on
+    aborted-due-to-conflicts.
     """
-    conn = connect()
-    try:
-        init_schema(conn)
-        rows = conn.execute(
-            """
-            SELECT id, plan_id, date, sport, library_ref,
-                   target_tss, target_duration_s, purpose, pushed_to_intervals
-            FROM sessions_planned
-            WHERE week_id = ?
-            ORDER BY date
-            """,
-            (week_id,),
-        ).fetchall()
-    finally:
-        conn.close()
+    from .push import (
+        PushAborted,
+        load_planned_sessions,
+        push_week,
+        render_conflicts_text,
+        render_mismatches_text,
+        render_session_table_rows,
+    )
 
-    if not rows:
+    conn = connect()
+    init_schema(conn)
+    try:
+        planned = load_planned_sessions(conn, week_id=week_id)
+    except Exception:
+        conn.close()
+        raise
+
+    if not planned:
+        conn.close()
         console.print(
-            f"[yellow]No planned sessions for {week_id}. "
-            f"Run a planning skill first (available in Phase 4+).[/yellow]"
+            f"[yellow]No planned sessions for {week_id}. Run a planning skill first.[/yellow]"
         )
         raise typer.Exit(code=0)
 
+    # Always render the session table — both dry-run and real-push users
+    # benefit from seeing what's about to land.
     table = Table(
-        title=f"[DRY RUN] {week_id} planned sessions",
+        title=("[DRY RUN] " if dry_run else "") + f"{week_id} planned sessions",
         show_header=True,
         header_style="bold",
     )
-    for col in ("Date", "Sport", "Library", "Target TSS", "Duration (min)", "Purpose", "Pushed?"):
+    for col in ("Date", "Sport", "Library", "Target TSS", "Duration", "Purpose"):
         table.add_column(col)
-
-    for r in rows:
-        dur_min = r["target_duration_s"] // 60 if r["target_duration_s"] else "—"
-        pushed = "[green]yes[/green]" if r["pushed_to_intervals"] else "no"
-        table.add_row(
-            str(r["date"]),
-            r["sport"] or "—",
-            r["library_ref"] or "—",
-            str(r["target_tss"]) if r["target_tss"] else "—",
-            str(dur_min),
-            r["purpose"] or "—",
-            pushed,
-        )
+    for row in render_session_table_rows(planned):
+        table.add_row(*row)
     console.print(table)
+
+    plan_id = planned[0].plan_id
+
+    def _on_conflict(conflicts) -> bool:
+        console.print(f"\n[yellow]{render_conflicts_text(conflicts)}[/yellow]")
+        if yes:
+            return True
+        return typer.confirm("Overwrite these events?", default=False)
+
+    try:
+        result = push_week(
+            plan_id=plan_id,
+            week_id=week_id,
+            planned=planned,
+            dry_run=dry_run,
+            verify=not no_verify,
+            force_overwrite=force_overwrite,
+            on_conflict_prompt=_on_conflict,
+            mark_pushed_conn=None if dry_run else conn,
+        )
+    except PushAborted as e:
+        conn.close()
+        console.print(f"\n[yellow]Aborted:[/yellow] {e}")
+        raise typer.Exit(code=2) from e
+    except Exception as e:
+        if dry_run:
+            conn.close()
+            # Dry-run shouldn't block on intervals reachability — the table
+            # above still answers "what would land". Keep the warning but
+            # exit clean.
+            console.print(
+                f"\n[yellow]Could not reach intervals for conflict check:[/yellow] {e}\n"
+                "[dim]This dry-run only shows local sessions; conflict detection "
+                "requires intervals creds (see `coach doctor`).[/dim]"
+            )
+            return
+        conn.close()
+        console.print(f"\n[red]push failed:[/red] {e}")
+        raise typer.Exit(code=1) from e
+
+    conn.close()
+
+    if result.conflicts:
+        console.print(f"\n[yellow]{render_conflicts_text(result.conflicts)}[/yellow]")
+
+    if dry_run:
+        console.print(
+            f"\n[dim]Dry-run only — {result.planned_count} sessions ready to push. "
+            "Re-run without --dry-run (or pipe a --yes confirmation) to write.[/dim]"
+        )
+        return
+
+    summary = result.summary()
     console.print(
-        "[dim]push-week in Phase 1 is a dry-run only. "
-        "Real push uses bulk_upsert_tagged_events in Phase 4.[/dim]"
+        f"\n[green]push complete[/green] — {summary['written_count']} written "
+        f"({summary['created_count']} created, {summary['updated_count']} updated)"
+        + (f", [red]{summary['error_count']} error(s)[/red]" if summary["error_count"] else "")
     )
+
+    if result.errors:
+        for err in result.errors:
+            console.print(f"  [red]✗[/red] {err}")
+
+    if result.verified:
+        if result.mismatches:
+            console.print(f"\n[red]{render_mismatches_text(result.mismatches)}[/red]")
+            raise typer.Exit(code=1)
+        console.print("[dim]post-write verify: clean[/dim]")
+    elif not no_verify:
+        console.print("[yellow]verification skipped (errors during write)[/yellow]")
 
 
 @app.command("doctor")
@@ -206,9 +339,7 @@ def doctor_cmd() -> None:
     else:
         console.print("[dim]Calibration debt: none.[/dim]")
 
-    has_fail = any(r.status == "fail" for r in results) or any(
-        d.severity == "fail" for d in debts
-    )
+    has_fail = any(r.status == "fail" for r in results) or any(d.severity == "fail" for d in debts)
     if has_fail:
         raise typer.Exit(code=1)
 
@@ -320,9 +451,7 @@ def check_in_cmd(
         "Sleep score (0–100, blank to skip)", default="", show_default=False
     )
     hrv_raw = typer.prompt("HRV ms (blank to skip)", default="", show_default=False)
-    rhr_raw = typer.prompt(
-        "Resting HR bpm (blank to skip)", default="", show_default=False
-    )
+    rhr_raw = typer.prompt("Resting HR bpm (blank to skip)", default="", show_default=False)
     readiness = typer.prompt("Readiness (1–10)", type=int)
     soreness = typer.prompt("Soreness (free text, blank to skip)", default="", show_default=False)
     notes = typer.prompt("Notes (blank to skip)", default="", show_default=False)
@@ -353,9 +482,7 @@ def check_in_cmd(
     elif no_push:
         console.print("[dim]  intervals push skipped (--no-push)[/dim]")
     else:
-        console.print(
-            f"[yellow]  intervals push failed:[/yellow] {result.intervals_error}"
-        )
+        console.print(f"[yellow]  intervals push failed:[/yellow] {result.intervals_error}")
 
 
 @vectors_app.command("rebuild")
@@ -469,6 +596,247 @@ def vectors_search_cmd(
         preview = h.text.replace("\n", " ")[:80]
         table.add_row(f"{h.score:.3f}", cred_fmt, h.path, preview + "…")
     console.print(table)
+
+
+def _resolve_plan_id(plan_id: str | None) -> str:
+    """Resolve --plan-id from the single active plan when omitted."""
+    from . import plans as _plans
+
+    if plan_id:
+        return plan_id
+    try:
+        found = _plans.find_single_plan()
+    except _plans.MultiplePlansError as e:
+        console.print(f"[red]{e}[/red]")
+        raise typer.Exit(code=2) from e
+    if found is None:
+        console.print("[red]No plan under plans/. Pass --plan-id explicitly.[/red]")
+        raise typer.Exit(code=2)
+    return found[0]
+
+
+def _print_amend_result(result, *, dry_run: bool) -> None:
+    """Render an AmendResult to the console — header + per-file unified diff."""
+    import difflib
+
+    badge = "[yellow]DRY RUN[/yellow]" if dry_run else "[green]applied[/green]"
+    console.print(f"\n[bold]{result.operation}[/bold] {badge} — {result.summary}")
+    if result.violations:
+        for v in result.violations:
+            severity = "[red]HARD[/red]" if result.hard_block else "[yellow]SOFT[/yellow]"
+            console.print(f"  {severity}: {v}")
+        if result.hard_block:
+            console.print(
+                "[red]Refusing to apply — HARD validator blocked. Use --dry-run to inspect.[/red]"
+            )
+
+    for change in result.files:
+        if not change.changed:
+            continue
+        console.print(f"\n[bold]— {change.label}[/bold]")
+        diff = difflib.unified_diff(
+            change.before.splitlines(keepends=True),
+            change.after.splitlines(keepends=True),
+            fromfile="before",
+            tofile="after",
+            n=2,
+        )
+        text = "".join(diff).rstrip()
+        if text:
+            for line in text.splitlines():
+                if line.startswith("+") and not line.startswith("+++"):
+                    console.print(f"[green]{line}[/green]")
+                elif line.startswith("-") and not line.startswith("---"):
+                    console.print(f"[red]{line}[/red]")
+                elif line.startswith("@@"):
+                    console.print(f"[cyan]{line}[/cyan]")
+                else:
+                    console.print(line, highlight=False)
+        else:
+            console.print("  [dim](no diff)[/dim]")
+
+    if not dry_run and not result.hard_block:
+        scope = result.decision_scope or "—"
+        console.print(
+            f"\n[dim]decisions row inserted (scope={scope}, kind={result.decision_kind})[/dim]"
+        )
+
+
+@plan_amend_app.command("shift-target")
+def plan_amend_shift_target_cmd(
+    delta: str = typer.Option(
+        "",
+        "--delta",
+        "-d",
+        help="Signed shift like '+6d' or '-1w'. Mutually exclusive with --target.",
+    ),
+    target: str = typer.Option(
+        "",
+        "--target",
+        help="ISO date YYYY-MM-DD for the new race day. Mutually exclusive with --delta.",
+    ),
+    reason: str = typer.Option(
+        ...,
+        "--reason",
+        help="Why the shift — written to changelog.md and the decisions table.",
+    ),
+    plan_id: str = typer.Option(
+        "",
+        "--plan-id",
+        help="Plan id under plans/. Defaults to single auto-detected plan.",
+    ),
+    dry_run: bool = typer.Option(
+        False,
+        "--dry-run",
+        help="Print the diff without writing.",
+    ),
+) -> None:
+    """Move the A-race / target date by N days, shift future phases uniformly."""
+    from .amend import AmendError, shift_target
+
+    pid = _resolve_plan_id(plan_id or None)
+    try:
+        days_delta: int | None = None
+        target_arg: str | None = None
+        if delta and target:
+            console.print("[red]Pass exactly one of --delta or --target.[/red]")
+            raise typer.Exit(code=2)
+        if delta:
+            from .amend import _parse_shift_delta  # private but stable
+
+            days_delta = _parse_shift_delta(delta)
+        elif target:
+            target_arg = target
+        else:
+            console.print("[red]Pass --delta or --target.[/red]")
+            raise typer.Exit(code=2)
+
+        result = shift_target(
+            pid,
+            days_delta=days_delta,
+            target=target_arg,
+            reason=reason,
+            dry_run=dry_run,
+        )
+    except AmendError as e:
+        console.print(f"[red]{e}[/red]")
+        raise typer.Exit(code=2) from e
+
+    _print_amend_result(result, dry_run=dry_run)
+    if result.hard_block:
+        raise typer.Exit(code=1)
+
+
+@plan_amend_app.command("switch-target")
+def plan_amend_switch_target_cmd(
+    new_race_id: str = typer.Argument(..., help="ID of the new A-race in race-calendar.yaml."),
+    reason: str = typer.Option(
+        ...,
+        "--reason",
+        help="Why the switch — written to changelog.md and the decisions table.",
+    ),
+    plan_id: str = typer.Option("", "--plan-id"),
+    dry_run: bool = typer.Option(False, "--dry-run"),
+) -> None:
+    """Re-anchor the plan on a different race; carry forward completed phases."""
+    from .amend import AmendError, switch_target
+
+    pid = _resolve_plan_id(plan_id or None)
+    try:
+        result = switch_target(
+            pid,
+            new_race_id=new_race_id,
+            reason=reason,
+            dry_run=dry_run,
+        )
+    except AmendError as e:
+        console.print(f"[red]{e}[/red]")
+        raise typer.Exit(code=2) from e
+
+    _print_amend_result(result, dry_run=dry_run)
+    if result.hard_block:
+        raise typer.Exit(code=1)
+
+
+@plan_amend_app.command("insert-test")
+def plan_amend_insert_test_cmd(
+    slot: str = typer.Argument(
+        ...,
+        help="Test slot, e.g. '2026-W22-Wed'. Day = mon|tue|...|sun.",
+    ),
+    kind: str = typer.Option(
+        ...,
+        "--type",
+        help="One of ftp_test, css_test, 5k_tt, run_threshold.",
+    ),
+    reason: str = typer.Option(..., "--reason"),
+    no_recalibrate: bool = typer.Option(
+        False,
+        "--no-recalibrate",
+        help="Skip the calibration follow-up file (default: register a TODO).",
+    ),
+    plan_id: str = typer.Option("", "--plan-id"),
+    dry_run: bool = typer.Option(False, "--dry-run"),
+) -> None:
+    """Insert a calibration test into a week + sessions_planned + follow-up TODO."""
+    from .amend import AmendError, insert_test
+
+    pid = _resolve_plan_id(plan_id or None)
+    try:
+        result = insert_test(
+            pid,
+            slot=slot,
+            kind=kind,  # type: ignore[arg-type]
+            reason=reason,
+            recalibrate_on_result=not no_recalibrate,
+            dry_run=dry_run,
+        )
+    except AmendError as e:
+        console.print(f"[red]{e}[/red]")
+        raise typer.Exit(code=2) from e
+
+    _print_amend_result(result, dry_run=dry_run)
+
+
+@week_app.command("amend-session")
+def week_amend_session_cmd(
+    week_id: str = typer.Argument(..., help="ISO week id, e.g. 2026-W18."),
+    day: str = typer.Argument(..., help="Day of week — mon|tue|...|sun."),
+    duration: str = typer.Option(
+        "",
+        "--duration",
+        help="New duration ('45min', '1.5h', '14km'). Distance is informational.",
+    ),
+    zone: str = typer.Option("", "--zone", help="Target zone tag, e.g. 'z1', 'z2'."),
+    swap_sport: str = typer.Option(
+        "",
+        "--swap-sport",
+        help="Replace the planned sport — bike|run|swim|strength|brick.",
+    ),
+    reason: str = typer.Option(..., "--reason"),
+    plan_id: str = typer.Option("", "--plan-id"),
+    dry_run: bool = typer.Option(False, "--dry-run"),
+) -> None:
+    """Atomic single-session amendment: append to week file + log decision."""
+    from .amend import AmendError, amend_session
+
+    pid = _resolve_plan_id(plan_id or None)
+    try:
+        result = amend_session(
+            pid,
+            week_id=week_id,
+            day=day,
+            duration=duration or None,
+            zone=zone or None,
+            swap_sport=swap_sport or None,
+            reason=reason,
+            dry_run=dry_run,
+        )
+    except AmendError as e:
+        console.print(f"[red]{e}[/red]")
+        raise typer.Exit(code=2) from e
+
+    _print_amend_result(result, dry_run=dry_run)
 
 
 @dashboard_app.command("week")
