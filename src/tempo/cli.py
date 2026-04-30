@@ -413,6 +413,21 @@ def research_gap_cmd(
         help="Optional sources.yaml topic filter (e.g. 'injury', 'nutrition').",
     ),
     k: int = typer.Option(5, "--k", help="Max suggestions to print."),
+    execute: bool = typer.Option(
+        False,
+        "--execute",
+        help=(
+            "Emit a JSON brief listing the top-K constrained suggestion queries "
+            "for the /research-gap-fetch slash command to drive WebSearch + "
+            "approval + ingest. Never fetches; the agent does that under an "
+            "explicit approval gate."
+        ),
+    ),
+    top_k: int = typer.Option(
+        3,
+        "--top-k",
+        help="With --execute: how many suggestion queries to surface (default 3).",
+    ),
 ) -> None:
     """Detect insufficient local coverage and propose trusted-source queries.
 
@@ -421,9 +436,16 @@ def research_gap_cmd(
     pass the bar or prints site-scoped queries against sources.yaml for
     you to paste into a browser. Approved URLs go through /ingest-research.
 
+    With ``--execute``, prints a JSON brief (queries + credibility tags +
+    runbook fields) so the ``/research-gap-fetch`` slash command can
+    orchestrate WebSearch → AskUserQuestion → /ingest-research without
+    free-form queries leaking into the loop.
+
     No web fetch happens here — this is a suggestion surface, not an
-    autonomous researcher.
+    autonomous researcher. Approval is always explicit.
     """
+    import json as _json
+
     from .gap_search import (
         KnowledgeGap,
         detect_gap,
@@ -432,6 +454,74 @@ def research_gap_cmd(
 
     topic_arg = topic or None
     result = detect_gap(query, topic=topic_arg)
+
+    if execute:
+        # Machine-readable brief for the /research-gap-fetch slash command.
+        if not isinstance(result, KnowledgeGap):
+            hits, confidence = result
+            payload = {
+                "gap_detected": False,
+                "query": query,
+                "topic": topic_arg,
+                "confidence": {
+                    "n_hits": confidence.n_hits,
+                    "max_score": confidence.max_score,
+                    "mean_credibility_rank": confidence.mean_credibility_rank,
+                },
+                "hits": [
+                    {
+                        "score": h.score,
+                        "credibility": h.credibility,
+                        "path": h.path,
+                        "snippet": h.text[:200],
+                    }
+                    for h in hits
+                ],
+                "suggestions": [],
+                "runbook": "Local knowledge sufficient — no web fetch needed.",
+            }
+            typer.echo(_json.dumps(payload, indent=2))
+            return
+
+        gap = result
+        suggestions = suggest_research_queries(gap, k=top_k, topic_filter=topic_arg)
+        payload = {
+            "gap_detected": True,
+            "query": query,
+            "topic": topic_arg,
+            "reason": gap.reason,
+            "confidence": {
+                "n_hits": gap.confidence.n_hits,
+                "max_score": gap.confidence.max_score,
+                "mean_credibility_rank": gap.confidence.mean_credibility_rank,
+            },
+            "suggestions": [
+                {
+                    "source_id": s.source_id,
+                    "source_name": s.source_name,
+                    "credibility": s.credibility,
+                    "query": s.query,
+                    "domain": s.domain,
+                }
+                for s in suggestions
+            ],
+            "constraints": {
+                "queries_constrained_to_suggestions": True,
+                "approval_required": True,
+                "ingest_via": "research-gap",
+            },
+            "runbook": (
+                "For each suggestion, call WebSearch with the EXACT query string "
+                "(never a free-form variant). Collect URL+title results, present "
+                "them with credibility tags via AskUserQuestion. On approval, "
+                "feed each URL through /ingest-research and add ingest_via, "
+                "gap_query, suggestion, source_id to the resulting frontmatter."
+            ),
+        }
+        typer.echo(_json.dumps(payload, indent=2))
+        if not suggestions:
+            raise typer.Exit(code=2)
+        return
 
     if not isinstance(result, KnowledgeGap):
         hits, confidence = result
@@ -463,7 +553,8 @@ def research_gap_cmd(
 
     console.print(
         "[dim]Paste any of these into your browser; URLs that look credible "
-        "go through /ingest-research:[/dim]"
+        "go through /ingest-research. Or run with --execute to drive "
+        "/research-gap-fetch:[/dim]"
     )
     table = Table(show_header=True, header_style="bold")
     for col in ("#", "Credibility", "Source", "Suggested query"):

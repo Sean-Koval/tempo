@@ -14,17 +14,19 @@ escalation:
    field is populated. Sources without a domain (books, podcasts,
    academic researchers without a personal site) get author/title-
    shaped fallback queries.
-4. The user picks 0-N suggestions and feeds them to ``/ingest-research``;
-   no auto-fetch.
-
-This module deliberately does NOT call the web. Wiring an actual
-WebSearch tool is a follow-up — keeping the gap-detection + suggestion
-shape stable lets that wiring slot in without changing callers.
+4. :func:`execute_research_gap` orchestrates the closed loop: it runs
+   a caller-supplied ``web_search`` over the (already constrained)
+   suggestion queries, surfaces the URL list to a caller-supplied
+   ``approve`` callable for an explicit yes/no, and only then yields
+   ingest tasks. The hard invariant is that ``web_search`` is only
+   ever invoked with queries produced by :func:`suggest_research_queries`
+   — never free-form. Cancel at the approval gate writes nothing.
 """
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from collections.abc import Callable, Iterable, Sequence
+from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
@@ -249,11 +251,204 @@ def _author_query(source: dict[str, Any], query: str) -> str:
     return f'"{fragment}" {query}'.strip()
 
 
+# --- Closed-loop execution ------------------------------------------------
+
+
+@dataclass(frozen=True)
+class WebSearchResult:
+    """A single hit returned by the caller-supplied ``web_search`` callable.
+
+    Mirrors the minimal shape the Claude Code WebSearch tool emits per result.
+    Only ``url`` and ``title`` are required; ``snippet`` is best-effort.
+    """
+
+    url: str
+    title: str
+    snippet: str = ""
+
+
+@dataclass(frozen=True)
+class FetchCandidate:
+    """A web-search result paired with the suggestion that produced it.
+
+    Carries forward the credibility tag from the source registry so the
+    approval prompt can show it alongside the URL — and so the downstream
+    ingest step can stamp the right ``credibility`` into frontmatter
+    without re-deriving it.
+    """
+
+    url: str
+    title: str
+    snippet: str
+    suggestion: ResearchQuerySuggestion
+    credibility: str  # mirrors suggestion.credibility, copied for ingest convenience
+
+
+@dataclass(frozen=True)
+class IngestTask:
+    """An approved URL ready for the ingest-research pipeline.
+
+    The ``frontmatter_extras`` dict is what callers should splice into the
+    note's frontmatter so future retrieval can trace it back to the gap
+    that prompted it. Keys: ``ingest_via``, ``gap_query``, ``suggestion``,
+    ``source_id``.
+    """
+
+    url: str
+    title: str
+    credibility: str
+    suggestion: ResearchQuerySuggestion
+    gap_query: str
+    frontmatter_extras: dict[str, Any] = field(default_factory=dict)
+
+
+@dataclass(frozen=True)
+class ResearchGapExecution:
+    """Outcome of :func:`execute_research_gap`.
+
+    ``approved`` is False when the caller cancelled at the approval gate
+    (or there were no candidates to approve). ``tasks`` is empty when
+    ``approved`` is False — that is the "cancel writes nothing" invariant.
+    """
+
+    gap: KnowledgeGap
+    suggestions: list[ResearchQuerySuggestion]
+    candidates: list[FetchCandidate]
+    approved: bool
+    tasks: list[IngestTask]
+
+
+WebSearchFn = Callable[[str], Iterable[WebSearchResult]]
+ApproveFn = Callable[[Sequence[FetchCandidate]], Sequence[int]]
+
+
+def execute_research_gap(
+    gap: KnowledgeGap,
+    *,
+    web_search: WebSearchFn,
+    approve: ApproveFn,
+    sources_path: Path | None = None,
+    top_k_suggestions: int = 3,
+    max_results_per_query: int = 5,
+    topic_filter: str | None = None,
+) -> ResearchGapExecution:
+    """Run the constrained-search → approval → ingest-task pipeline.
+
+    The hard invariant: ``web_search`` is only ever called with queries
+    produced by :func:`suggest_research_queries` — never free-form input
+    from the caller. This preserves the credibility-leak protection: every
+    search is site-scoped to a registered source.
+
+    Args:
+        gap: A detected :class:`KnowledgeGap`.
+        web_search: Callable taking a single suggestion query and yielding
+            :class:`WebSearchResult` values. The caller (a slash command
+            or test) is responsible for invoking the actual WebSearch tool.
+        approve: Callable taking the assembled candidate list and returning
+            the indices the user approved (0..len(candidates)-1). Returning
+            an empty sequence means "cancel" — no tasks are emitted.
+        sources_path: Override for ``knowledge/sources.yaml`` (tests).
+        top_k_suggestions: How many suggestion queries to run (default 3
+            per ticket: peer-reviewed-first triumvirate).
+        max_results_per_query: Cap per-query results to keep the approval
+            list scannable.
+        topic_filter: Forwarded to :func:`suggest_research_queries`.
+
+    Returns:
+        :class:`ResearchGapExecution` with ``approved`` and ``tasks`` set.
+        On cancel, ``tasks`` is empty and the caller writes nothing.
+    """
+    suggestions = suggest_research_queries(
+        gap,
+        sources_path=sources_path,
+        k=top_k_suggestions,
+        topic_filter=topic_filter,
+    )
+
+    candidates: list[FetchCandidate] = []
+    seen_urls: set[str] = set()
+    for sug in suggestions:
+        # Constrained: only the suggestion's prebuilt query is sent. Never gap.query alone.
+        for raw in web_search(sug.query):
+            if not raw.url or raw.url in seen_urls:
+                continue
+            seen_urls.add(raw.url)
+            candidates.append(
+                FetchCandidate(
+                    url=raw.url,
+                    title=raw.title or raw.url,
+                    snippet=raw.snippet,
+                    suggestion=sug,
+                    credibility=sug.credibility,
+                )
+            )
+            if (
+                sum(1 for c in candidates if c.suggestion.source_id == sug.source_id)
+                >= max_results_per_query
+            ):
+                break
+
+    if not candidates:
+        return ResearchGapExecution(
+            gap=gap,
+            suggestions=suggestions,
+            candidates=[],
+            approved=False,
+            tasks=[],
+        )
+
+    approved_indices = list(approve(candidates))
+    if not approved_indices:
+        return ResearchGapExecution(
+            gap=gap,
+            suggestions=suggestions,
+            candidates=candidates,
+            approved=False,
+            tasks=[],
+        )
+
+    tasks: list[IngestTask] = []
+    for i in approved_indices:
+        if not (0 <= i < len(candidates)):
+            continue
+        c = candidates[i]
+        tasks.append(
+            IngestTask(
+                url=c.url,
+                title=c.title,
+                credibility=c.credibility,
+                suggestion=c.suggestion,
+                gap_query=gap.query,
+                frontmatter_extras={
+                    "ingest_via": "research-gap",
+                    "gap_query": gap.query,
+                    "suggestion": c.suggestion.query,
+                    "source_id": c.suggestion.source_id,
+                },
+            )
+        )
+
+    return ResearchGapExecution(
+        gap=gap,
+        suggestions=suggestions,
+        candidates=candidates,
+        approved=True,
+        tasks=tasks,
+    )
+
+
 __all__ = [
+    "ApproveFn",
+    "FetchCandidate",
+    "IngestTask",
     "KnowledgeGap",
+    "ResearchGapExecution",
     "ResearchQuerySuggestion",
     "RetrievalConfidence",
+    "WebSearchFn",
+    "WebSearchResult",
     "detect_gap",
+    "execute_research_gap",
     "load_sources",
     "suggest_research_queries",
 ]
