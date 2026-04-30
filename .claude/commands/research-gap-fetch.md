@@ -95,8 +95,12 @@ tool with:
 
 - `scope`: `research-gap:<slug-of-query>`
 - `kind`: `research_gap_closed`
-- `rationale`: one paragraph naming the gap, the suggestions that ran, the
-  URLs approved, and the resulting note paths.
+- `rationale`: one paragraph that MUST start with the gap reason verbatim
+  (`no_hits` / `low_score` / `low_credibility` / `thin_coverage`) and the
+  query that triggered it, then names the suggestions that ran, the URLs
+  approved, and the resulting note paths. The gap reason is what a future
+  search-memory query keys off — without it, the decision becomes a
+  blob of prose that's much harder to retrieve later.
 - `changed_files`: list of every note `/ingest-research` produced.
 
 ## Step 6 — Report
