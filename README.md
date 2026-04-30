@@ -119,9 +119,28 @@ $EDITOR athlete/goals.yaml
 # 6. Open Claude Code in this directory
 #    .claude/CLAUDE.md loads automatically; intervals + coach-db MCPs are wired.
 
-# Optional — auto-embed knowledge/ changes on commit
+# Optional — auto-embed knowledge/ changes on commit + secret-scan staged diffs
 bash scripts/install-hooks.sh
 ```
+
+## Safety
+
+Tempo holds intervals.icu API keys, Strava tokens, and (on disk) several years of personal training and wellness data. The `.env` file is gitignored, but git accidents happen — a stray `git add .` from the wrong directory, a refactor that moves a credential into a tracked file. Defense-in-depth lives in a pre-commit hook.
+
+```bash
+# 1. Install gitleaks (one of):
+#    macOS:   brew install gitleaks
+#    Linux:   curl -sSfL https://github.com/gitleaks/gitleaks/releases/latest/download/gitleaks_8.18.4_linux_x64.tar.gz | tar -xz -C /usr/local/bin gitleaks
+#    Windows: scoop install gitleaks
+#    or:      go install github.com/gitleaks/gitleaks/v8@latest
+
+# 2. Activate Tempo's hooks (covers gitleaks + bd flush + knowledge auto-embed)
+bash scripts/install-hooks.sh
+```
+
+The hook scans only the *staged diff* on every `git commit` — fast, no historical-cleanup chore. A finding blocks the commit; rotate the credential before re-staging. Legitimate test fixtures can be allowlisted with an inline `# gitleaks:allow` comment or a fingerprint in `.gitleaks.toml`.
+
+If `gitleaks` isn't on `$PATH`, the hook prints a one-line warning and skips — it doesn't block your commit, but it also doesn't protect you. Install it.
 
 At this point the full coaching loop is wired. Skills, dashboards, and the weekly rhythm are all live — see [build phases](#build-phases).
 

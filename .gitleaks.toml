@@ -1,0 +1,30 @@
+# Gitleaks config for tempo. Inherits the upstream default rule set and
+# adds project-specific allowlists.
+#
+# See https://github.com/gitleaks/gitleaks for the rule reference.
+
+[extend]
+# Pull in the bundled default rules (AWS, GCP, Slack, GitHub PATs, etc).
+useDefault = true
+
+[allowlist]
+description = "Tempo test fixtures and templates."
+
+paths = [
+    # Synthetic credentials in tests — strings like
+    # ``intervals_icu_api_key="secret"`` and respx mocks of token-shaped values.
+    '''^tests/''',
+    '''^mcp-servers/.*/tests/''',
+    # The .env template should never carry a real secret, but its placeholder
+    # values can look key-shaped.
+    '''^\.env\.example$''',
+    # Knowledge fixtures: ingested research with sample tokens in URLs.
+    '''^knowledge/research/''',
+    # Vendored docs that may quote tokens for illustrative purposes.
+    '''^mcp-servers/.*/(README|CHANGELOG)\.md$''',
+]
+
+# Inline allowlist regexes — match anywhere a line ends with the marker.
+regexes = [
+    '''gitleaks:allow''',
+]

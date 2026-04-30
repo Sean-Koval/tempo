@@ -1,0 +1,60 @@
+#!/usr/bin/env bash
+# Pre-commit guards for the tempo repo.
+#
+#  1. bd flush — keep .beads/issues.jsonl in sync with the bd daemon so
+#     the working tree commit captures the current ticket state.
+#
+#  2. gitleaks secret scan — catches API-key-shaped strings in the
+#     staged diff before they leave the working tree. .env is already
+#     gitignored, but a hook is defense-in-depth against the case where
+#     a secret accidentally lands in a tracked file.
+#
+# Enable: ``./scripts/install-hooks.sh`` (sets core.hooksPath=.githooks).
+#
+# Bypass for emergencies: ``git commit --no-verify``.
+# Override a single legitimate-looking finding: append the inline marker
+# ``# gitleaks:allow`` to the line (or ``// gitleaks:allow`` etc).
+
+set -u
+
+# ---- 1. bd flush ----------------------------------------------------------
+
+if command -v bd >/dev/null 2>&1; then
+    if git rev-parse --git-dir >/dev/null 2>&1; then
+        if [ -d ".beads" ] || [ -f ".beads/beads.db" ]; then
+            bd sync --flush-only >/dev/null 2>&1 || true
+            if [ -f ".beads/issues.jsonl" ] && ! git diff --cached --quiet -- .beads/issues.jsonl 2>/dev/null; then
+                : # already staged or about to be — let the user notice in their commit
+            elif [ -f ".beads/issues.jsonl" ] && ! git diff --quiet -- .beads/issues.jsonl 2>/dev/null; then
+                git add .beads/issues.jsonl
+            fi
+        fi
+    fi
+fi
+
+# ---- 2. gitleaks staged scan ---------------------------------------------
+
+if ! command -v gitleaks >/dev/null 2>&1; then
+    cat >&2 <<'EOF'
+[tempo] gitleaks not installed — skipping secret scan.
+        Install (one-line): see README.md "Safety" section.
+        Defense-in-depth — proceed at your own risk.
+EOF
+    exit 0
+fi
+
+# `gitleaks protect --staged` scans only what's about to be committed.
+# Exit codes: 0 clean, 1 leak found, 126/127 = config error.
+if ! gitleaks protect --staged --redact --no-banner --verbose >&2; then
+    cat >&2 <<'EOF'
+
+[tempo] secret scan blocked the commit.
+        Real leak? Rotate the credential, then re-stage clean files.
+        False positive? Append "# gitleaks:allow" to the line, or add
+        a fingerprint to .gitleaks.toml [allowlist] paths/regexes.
+        Emergency bypass: git commit --no-verify  (use sparingly).
+EOF
+    exit 1
+fi
+
+exit 0
