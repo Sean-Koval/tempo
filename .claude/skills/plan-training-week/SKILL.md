@@ -86,14 +86,32 @@ From the brief's `plan.phase`:
 - `key_sessions` — library ids to anchor the week around. Prefer these over
   inventing.
 
-Also read `knowledge/methodology/session-library.md` for each library ref's
-duration/TSS/structure ranges. Pick point values based on phase + this
-week's position within the phase (`plan.week_of_phase`).
+Also read the per-sport file(s) under `knowledge/methodology/session-library/`
+for each library ref's duration/TSS/structure ranges. The library is
+split by sport — pick the file(s) that match this phase's
+`sport_focus`:
+
+| Phase `sport_focus` weight ≥ 0.15 | File to read |
+| --- | --- |
+| `swim` | `knowledge/methodology/session-library/swim.md` |
+| `bike` | `knowledge/methodology/session-library/bike.md` |
+| `run`  | `knowledge/methodology/session-library/run.md`  |
+| `strength` | `knowledge/methodology/session-library/strength.md` |
+| any phase whose `key_sessions` contains a brick ref (`brick_run_off_bike`, `race_sim_brick`, `race_day_fueling_rehearsal`) | `knowledge/methodology/session-library/brick.md` |
+
+Skip files for sports the phase doesn't touch — a `peak_run` phase has
+no business pulling swim sprint sets. This filtering is the whole
+point of the split (per `tempo-208`); the composer already filters
+`key_sessions` by sport, the skill should mirror it.
+
+Pick point values based on phase + this week's position within the
+phase (`plan.week_of_phase`).
 
 If you need a session archetype that isn't in the library, call
-`coach-db.find_similar_session` first. If a library entry is semantically
-close, use it rather than inventing. A truly novel session needs an
-explicit changelog justification.
+`coach-db.find_similar_session(description=..., sport=<sport>)` first
+— always pass `sport` to keep the match within the same sport bucket.
+If a library entry is semantically close, use it rather than inventing.
+A truly novel session needs an explicit changelog justification.
 
 ## Step 5 — Validate every drafted session
 

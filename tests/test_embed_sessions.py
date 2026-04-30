@@ -184,12 +184,79 @@ def test_search_sessions_empty_index(tmp_path: Path) -> None:
     assert hits == []
 
 
+def test_rebuild_sessions_directory_mode(tmp_path: Path) -> None:
+    """Directory of per-sport markdown files is picked up the same way."""
+    lib_dir = tmp_path / "session-library"
+    lib_dir.mkdir()
+    (lib_dir / "swim.md").write_text(
+        "## Swim\n\n### `technique_swim`\n"
+        "- **Purpose:** stroke quality\n"
+        "- **Duration:** 45–60 min\n"
+        "- **TSS:** 30–45\n"
+        "- **Structure:** drills\n",
+        encoding="utf-8",
+    )
+    (lib_dir / "bike.md").write_text(
+        "## Bike\n\n### `long_ride_z2`\n"
+        "- **Purpose:** durability\n"
+        "- **Duration:** 2.5–5 hours\n"
+        "- **TSS:** 120–300\n"
+        "- **Structure:** steady Z2\n",
+        encoding="utf-8",
+    )
+    vdir = tmp_path / "vectors"
+    stats = embed.rebuild_sessions(
+        session_library=lib_dir, vectors_dir=vdir, embedder=_fake_embedder()
+    )
+    assert stats.entries_scanned == 2
+    assert stats.entries_embedded == 2
+
+    # Idempotent on the second pass.
+    stats2 = embed.rebuild_sessions(
+        session_library=lib_dir, vectors_dir=vdir, embedder=_fake_embedder()
+    )
+    assert stats2.entries_embedded == 0
+    assert stats2.entries_skipped == 2
+
+    # Editing one file invalidates the whole index.
+    (lib_dir / "bike.md").write_text(
+        (lib_dir / "bike.md").read_text(encoding="utf-8")
+        + "\n### `threshold_bike`\n"
+        "- **Purpose:** raise FTP\n"
+        "- **Duration:** 75–90 min\n"
+        "- **TSS:** 80–110\n"
+        "- **Structure:** 3-4x10\n",
+        encoding="utf-8",
+    )
+    stats3 = embed.rebuild_sessions(
+        session_library=lib_dir, vectors_dir=vdir, embedder=_fake_embedder()
+    )
+    assert stats3.entries_embedded == 3
+    assert stats3.rows_deleted == 2
+
+    # Sport filter works across files.
+    hits = embed.search_sessions(
+        "long aerobic ride", sport="bike", k=5,
+        vectors_dir=vdir, embedder=_fake_embedder(),
+    )
+    assert hits
+    assert all(h.sport == "bike" for h in hits)
+
+
 def test_rebuild_sessions_against_real_library() -> None:
-    """Sanity check against the real knowledge/methodology/session-library.md."""
+    """Sanity check against the real per-sport session library directory.
+
+    Falls back to the legacy monolith path for old checkouts.
+    """
     from tempo.paths import repo_root
 
-    lib = repo_root() / "knowledge" / "methodology" / "session-library.md"
-    if not lib.is_file():
+    lib_dir = repo_root() / "knowledge" / "methodology" / "session-library"
+    legacy = repo_root() / "knowledge" / "methodology" / "session-library.md"
+    if lib_dir.is_dir():
+        lib: Path = lib_dir
+    elif legacy.is_file():
+        lib = legacy
+    else:
         pytest.skip("real library not present in this checkout")
     # Dry parse only — don't write to shared vectors dir.
     entries = list(embed._iter_session_entries(lib))
