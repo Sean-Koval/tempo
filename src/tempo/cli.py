@@ -290,6 +290,66 @@ def push_week_cmd(
         console.print("[yellow]verification skipped (errors during write)[/yellow]")
 
 
+@app.command("decoupling")
+def decoupling_cmd(
+    limit: int = typer.Option(
+        50,
+        "--limit",
+        help="Max activities to process this run (oldest-first).",
+    ),
+    sleep_ms: int = typer.Option(
+        250,
+        "--sleep-ms",
+        help="Pause between stream fetches; courteous to the upstream rate limit.",
+    ),
+    recompute: bool = typer.Option(
+        False,
+        "--recompute",
+        help="Recompute even where decoupling is already populated.",
+    ),
+) -> None:
+    """Backfill aerobic decoupling (Pw:HR / Pa:HR) from activity streams.
+
+    Lazy by design: walks ``activities WHERE decoupling IS NULL`` oldest
+    first, fetches streams one at a time, persists the raw response under
+    ``data/raw/intervals/`` for rebuildability, and writes back to
+    ``activities.decoupling``.
+
+    Run after ``coach sync`` when you want fresher signal, or in
+    chunks (``--limit 50``) to backfill a long history without exhausting
+    the upstream rate budget.
+    """
+    from .decoupling import backfill
+
+    console.print(
+        f"[bold]Decoupling[/bold] — backfilling up to {limit} activities "
+        f"(sleep {sleep_ms}ms, recompute={recompute})…"
+    )
+
+    try:
+        stats = asyncio.run(
+            backfill(
+                limit=limit,
+                sleep_s=sleep_ms / 1000.0,
+                recompute=recompute,
+            )
+        )
+    except Exception as e:
+        console.print(f"[red]decoupling backfill failed:[/red] {e}")
+        raise typer.Exit(code=1) from e
+
+    console.print(
+        f"  candidates: {stats.candidates} • "
+        f"fetched: [green]{stats.fetched}[/green] • "
+        f"computed: [green]{stats.computed}[/green] • "
+        f"skipped: {stats.skipped} • "
+        f"errors: [red]{stats.errors}[/red] • "
+        f"{stats.duration_ms}ms"
+    )
+    if stats.candidates == 0:
+        console.print("[dim]Nothing to do — all eligible activities have decoupling.[/dim]")
+
+
 @app.command("doctor")
 def doctor_cmd() -> None:
     """Run preflight checks against intervals.icu, coach.db, vectors, plans.
