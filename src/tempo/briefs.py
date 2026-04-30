@@ -74,18 +74,36 @@ def _recent_load_summary(days_back: int = 56) -> dict[str, Any]:
 
 
 def _profile_summary(profile: dict[str, Any]) -> dict[str, Any]:
-    """Shrink profile.yaml to the fields the agent actually reasons over."""
+    """Shrink profile.yaml to the fields the agent actually reasons over.
+
+    Threshold fields may be either bare scalars (legacy) or
+    ``{value, set_at, source, ...}`` structs (current schema). The brief
+    keeps top-level threshold keys as scalars (so the skill prompts read
+    the same way regardless of schema) and exposes a parallel
+    ``threshold_provenance`` block for stale-zone reasoning.
+    """
+    from . import zones
+
     thresholds = profile.get("thresholds") or {}
     athlete_info = profile.get("athlete") or {}
+
+    provenance: dict[str, dict[str, Any]] = {}
+    scalar: dict[str, Any] = {}
+    for key in ("ftp_w", "lthr_bpm", "run_threshold_pace", "swim_css_pace", "max_hr"):
+        t = zones.parse_threshold(thresholds.get(key))
+        scalar[key] = t.value
+        provenance[key] = {
+            "set_at": t.set_at.isoformat() if t.set_at else None,
+            "source": t.source,
+            "source_ref": t.source_ref,
+        }
+
     return {
         "name": athlete_info.get("name"),
         "weight_kg": athlete_info.get("weight_kg"),
-        "ftp_w": thresholds.get("ftp_w"),
-        "lthr_bpm": thresholds.get("lthr_bpm"),
-        "run_threshold_pace": thresholds.get("run_threshold_pace"),
-        "swim_css_pace": thresholds.get("swim_css_pace"),
-        "max_hr": thresholds.get("max_hr"),
+        **scalar,
         "resting_hr": thresholds.get("resting_hr"),
+        "threshold_provenance": provenance,
         "strengths": profile.get("strengths") or [],
         "limiters": profile.get("limiters") or [],
     }

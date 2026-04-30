@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from datetime import date
 from pathlib import Path
 
 import pytest
@@ -65,7 +66,11 @@ def test_full_state_emits_no_debts(project_root: Path) -> None:
         project_root,
         profile={
             "athlete": {"weight_kg": 75, "name": "Tester"},
-            "thresholds": {"ftp_w": 280, "lthr_bpm": 168, "max_hr": 188},
+            "thresholds": {
+                "ftp_w": {"value": 280, "set_at": "2026-04-15", "source": "field_test"},
+                "lthr_bpm": {"value": 168, "set_at": "2026-04-01", "source": "field_test"},
+                "max_hr": {"value": 188, "set_at": "2026-01-01", "source": "field_test"},
+            },
         },
         races=[
             {
@@ -101,7 +106,7 @@ def test_full_state_emits_no_debts(project_root: Path) -> None:
     finally:
         conn.close()
 
-    debts = calibration.calibration_debt(conn=None)
+    debts = calibration.calibration_debt(conn=None, today=date(2026, 5, 1))
     assert debts == []
 
 
@@ -200,6 +205,127 @@ def test_active_injury_with_research_present_no_debt(project_root: Path) -> None
     debts = calibration.calibration_debt()
     fields = {d.field for d in debts}
     assert "knowledge.research.injury" not in fields
+
+
+def test_zone_provenance_struct_no_debt_when_fresh(project_root: Path) -> None:
+    _seed_plan(project_root)
+    _seed_athlete(
+        project_root,
+        profile={
+            "athlete": {"weight_kg": 75},
+            "thresholds": {
+                "ftp_w": {"value": 280, "set_at": "2026-04-15", "source": "field_test"},
+                "lthr_bpm": {"value": 168, "set_at": "2026-03-01", "source": "race_result"},
+            },
+        },
+        races=[],
+    )
+    debts = calibration.calibration_debt(today=date(2026, 5, 1))
+    fields = {d.field for d in debts}
+    assert "athlete.profile.thresholds.ftp_w.set_at" not in fields
+    assert "athlete.profile.thresholds.lthr_bpm.set_at" not in fields
+    assert "athlete.profile.thresholds.ftp_w" not in fields  # value is set
+
+
+def test_zone_provenance_run_pace_stale_at_91_days(project_root: Path) -> None:
+    _seed_plan(project_root)
+    _seed_athlete(
+        project_root,
+        profile={
+            "athlete": {"weight_kg": 75},
+            "thresholds": {
+                "ftp_w": {"value": 280, "set_at": "2026-04-15", "source": "field_test"},
+                "lthr_bpm": {"value": 168, "set_at": "2026-03-01", "source": "race_result"},
+                "run_threshold_pace": {
+                    "value": "4:15/km",
+                    "set_at": "2026-01-30",
+                    "source": "race_result",
+                },
+            },
+        },
+        races=[],
+    )
+    # 91d after 2026-01-30 = 2026-05-01.
+    debts = calibration.calibration_debt(today=date(2026, 5, 1))
+    stale = [d for d in debts if d.field == "athlete.profile.thresholds.run_threshold_pace.set_at"]
+    assert len(stale) == 1
+    assert stale[0].severity == "warn"
+    assert "stale" in stale[0].message.lower()
+
+
+def test_zone_provenance_run_pace_fresh_at_30_days(project_root: Path) -> None:
+    _seed_plan(project_root)
+    _seed_athlete(
+        project_root,
+        profile={
+            "athlete": {"weight_kg": 75},
+            "thresholds": {
+                "ftp_w": {"value": 280, "set_at": "2026-04-15", "source": "field_test"},
+                "lthr_bpm": {"value": 168, "set_at": "2026-03-01", "source": "race_result"},
+                "run_threshold_pace": {
+                    "value": "4:15/km",
+                    "set_at": "2026-04-01",
+                    "source": "race_result",
+                },
+            },
+        },
+        races=[],
+    )
+    debts = calibration.calibration_debt(today=date(2026, 5, 1))
+    fields = {d.field for d in debts}
+    assert "athlete.profile.thresholds.run_threshold_pace.set_at" not in fields
+
+
+def test_zone_provenance_legacy_scalar_treated_as_stale(project_root: Path) -> None:
+    _seed_plan(project_root)
+    _seed_athlete(
+        project_root,
+        profile={
+            "athlete": {"weight_kg": 75},
+            # All scalars (legacy shape) — no set_at known anywhere.
+            "thresholds": {
+                "ftp_w": 280,
+                "lthr_bpm": 168,
+                "run_threshold_pace": "4:15/km",
+                "swim_css_pace": "1:35/100m",
+                "max_hr": 188,
+            },
+        },
+        races=[],
+    )
+    debts = calibration.calibration_debt(today=date(2026, 5, 1))
+    stale_fields = {
+        d.field for d in debts if d.field.startswith("athlete.profile.thresholds.")
+        and d.field.endswith(".set_at")
+    }
+    # Every populated zone with a freshness window emits a stale debt.
+    assert "athlete.profile.thresholds.ftp_w.set_at" in stale_fields
+    assert "athlete.profile.thresholds.lthr_bpm.set_at" in stale_fields
+    assert "athlete.profile.thresholds.run_threshold_pace.set_at" in stale_fields
+    assert "athlete.profile.thresholds.swim_css_pace.set_at" in stale_fields
+    assert "athlete.profile.thresholds.max_hr.set_at" in stale_fields
+
+
+def test_zone_provenance_blank_value_no_stale_debt(project_root: Path) -> None:
+    """A zone that's never been set shouldn't double-report as stale."""
+    _seed_plan(project_root)
+    _seed_athlete(
+        project_root,
+        profile={
+            "athlete": {"weight_kg": 75},
+            "thresholds": {
+                "ftp_w": {"value": None, "set_at": None, "source": "manual_estimate"},
+                "lthr_bpm": 168,
+            },
+        },
+        races=[],
+    )
+    debts = calibration.calibration_debt(today=date(2026, 5, 1))
+    fields = {d.field for d in debts}
+    # "Not set" debt fires:
+    assert "athlete.profile.thresholds.ftp_w" in fields
+    # Stale debt does NOT fire — the value is empty:
+    assert "athlete.profile.thresholds.ftp_w.set_at" not in fields
 
 
 def test_load_history_below_threshold_emits_warn(project_root: Path) -> None:

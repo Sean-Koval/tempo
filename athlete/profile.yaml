@@ -9,13 +9,35 @@ athlete:
   height_cm:       # TODO
 
 thresholds:
-  ftp_w:           # TODO — most recent 20-min or ramp test
-  ftp_tested: # YYYY-MM-DD
-  lthr_bpm:        # TODO — lactate threshold HR
-  run_threshold_pace: # "4:15/km" or "6:50/mi" — most recent test
-  swim_css_pace:   # "1:35/100m" — critical swim speed
-  max_hr:          # TODO
-  resting_hr:      # TODO
+  # Each zone-defining threshold carries provenance so stale tests
+  # surface as calibration debt instead of silently driving sessions.
+  # source: race_result | field_test | manual_estimate | physiology_lab
+  ftp_w:
+    value:                       # TODO — most recent 20-min or ramp test (W)
+    set_at:                      # YYYY-MM-DD
+    source: manual_estimate
+    source_ref:                  # "<plan-week|race-id|note>"
+  lthr_bpm:
+    value:                       # TODO — lactate threshold HR (bpm)
+    set_at:
+    source: manual_estimate
+    source_ref:
+  run_threshold_pace:
+    value:                       # "4:15/km" or "6:50/mi"
+    set_at:
+    source: manual_estimate
+    source_ref:
+  swim_css_pace:
+    value:                       # "1:35/100m" — critical swim speed
+    set_at:
+    source: manual_estimate
+    source_ref:
+  max_hr:
+    value:                       # TODO
+    set_at:
+    source: manual_estimate
+    source_ref:
+  resting_hr:                    # TODO — scalar, not a zone-defining threshold
 
 zones:
   # Bike — %FTP (Coggan 7-zone)

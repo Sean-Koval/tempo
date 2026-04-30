@@ -18,10 +18,11 @@ from __future__ import annotations
 
 import sqlite3
 from dataclasses import dataclass, field
+from datetime import date
 from pathlib import Path
 from typing import Any, Literal
 
-from . import athlete, plans
+from . import athlete, plans, zones
 from .db import connect, init_schema
 from .paths import coach_db_path, repo_root
 
@@ -58,7 +59,8 @@ def _profile_debts(root: Path | None) -> list[DebtItem]:
 
     out: list[DebtItem] = []
 
-    if _is_blank(thresholds.get("ftp_w")):
+    ftp = zones.parse_threshold(thresholds.get("ftp_w"))
+    if not ftp.is_set:
         out.append(
             DebtItem(
                 field="athlete.profile.thresholds.ftp_w",
@@ -72,7 +74,9 @@ def _profile_debts(root: Path | None) -> list[DebtItem]:
             )
         )
 
-    if _is_blank(thresholds.get("lthr_bpm")) and _is_blank(thresholds.get("max_hr")):
+    lthr = zones.parse_threshold(thresholds.get("lthr_bpm"))
+    max_hr = zones.parse_threshold(thresholds.get("max_hr"))
+    if not lthr.is_set and not max_hr.is_set:
         out.append(
             DebtItem(
                 field="athlete.profile.thresholds.lthr_bpm",
@@ -94,6 +98,52 @@ def _profile_debts(root: Path | None) -> list[DebtItem]:
                 message="Body weight not set — power-to-weight and fueling math use defaults.",
                 suggested_fix="Set athlete.weight_kg in athlete/profile.yaml.",
                 blocks=["plan-training-week (W/kg interpretation)", "race nutrition kcal targets"],
+            )
+        )
+
+    return out
+
+
+def _zone_freshness_debts(root: Path | None, today: date) -> list[DebtItem]:
+    """One ``warn`` debt per populated-but-stale threshold.
+
+    Skips thresholds the user hasn't filled in — those surface as
+    "not set" debts in :func:`_profile_debts` and double-reporting
+    them as "stale" would be noise.
+    """
+    profile = athlete.load_profile(root)
+    thresholds = profile.get("thresholds") or {}
+    out: list[DebtItem] = []
+
+    for key in zones.STALE_WINDOWS:
+        threshold = zones.parse_threshold(thresholds.get(key))
+        if not threshold.is_set:
+            continue
+        if not zones.is_stale(key, threshold, today=today):
+            continue
+
+        window = zones.STALE_WINDOWS[key]
+        suggested_test = zones.SUGGESTED_TEST[key]
+        age = threshold.age_days(today)
+        when = (
+            f"set {age} day(s) ago (>{window}d window)"
+            if age is not None
+            else "set_at unknown — treat as stale"
+        )
+        out.append(
+            DebtItem(
+                field=f"athlete.profile.thresholds.{key}.set_at",
+                severity="warn",
+                message=(
+                    f"{key} provenance is stale: {when}. "
+                    "Sessions targeting this zone may no longer match current fitness."
+                ),
+                suggested_fix=(
+                    f"Schedule a {suggested_test} in the next plan-training-week draft, "
+                    f"then update thresholds.{key} with the new value, set_at, and "
+                    "source: field_test (or race_result)."
+                ),
+                blocks=["plan-training-week (zone targeting accuracy)"],
             )
         )
 
@@ -270,12 +320,14 @@ def calibration_debt(
     *,
     root: Path | None = None,
     conn: sqlite3.Connection | None = None,
+    today: date | None = None,
 ) -> list[DebtItem]:
     """Return all outstanding calibration debts against the active plan.
 
     If ``plan_id`` is None, auto-detects via :func:`plans.find_single_plan`.
     Returns an empty list if no plan is found — there is nothing to calibrate
-    against without one.
+    against without one. ``today`` is the reference date for stale-zone math;
+    defaults to ``date.today()`` and is overridable for tests.
     """
     if plan_id is None:
         try:
@@ -288,8 +340,10 @@ def calibration_debt(
     else:
         plan_doc = plans.read_plan_yaml(plan_id, root=root) or {}
 
+    today = today or date.today()
     debts: list[DebtItem] = []
     debts.extend(_profile_debts(root))
+    debts.extend(_zone_freshness_debts(root, today))
     debts.extend(_preferences_debts(root))
     debts.extend(_race_debts(plan_doc, root))
     debts.extend(_load_history_debts(conn=conn))
