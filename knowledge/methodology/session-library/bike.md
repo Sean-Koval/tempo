@@ -44,3 +44,17 @@ description: Bike session archetypes. Library refs win over invention.
 - **Duration:** 75–90 min
 - **TSS:** 80–110
 - **Structure:** 15 WU → 3–4×10min @ 95–102%FTP with 5 easy → CD
+
+### `gravel_fondo_long_tempo`
+- **Purpose:** durability + sustained sub-threshold for long mass-start gravel/fondo events
+- **Duration:** 3.5–6 hours
+- **TSS:** 220–360
+- **Structure:** 30 WU Z2 → main: 2–4×30–45min @ 78–88%FTP (sweet-spot/upper-tempo) on rolling terrain, with 10–15 min Z2 between → settle into Z2 finish → CD. Practice in-event fueling (70–100g carb/hr) and bottle/pack handoffs.
+- **Notes:** if course has signature climbs, replace one tempo block with `climbing_repeats` structure on the same ride. Saddle time is part of the stimulus — don't shorten if avoidable.
+
+### `climbing_repeats`
+- **Purpose:** force + threshold under low-cadence load; event-specific climbing prep
+- **Duration:** 90–135 min
+- **TSS:** 110–160
+- **Structure:** 15 WU → 4–6×5–8min sustained climb @ 92–105%FTP, cadence 60–75 (seated unless terrain forces standing) with descent recovery → 10 CD. Outdoor preferred; ERG-mode trainer is acceptable substitute.
+- **Notes:** stop the set if cadence drops < 55 or perceived knee load spikes (R-7 watchword).
