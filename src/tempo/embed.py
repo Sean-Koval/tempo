@@ -884,10 +884,38 @@ def _parse_session_body(body: str) -> tuple[str, tuple[int | None, int | None], 
 
 
 def _iter_session_entries(session_library: Path) -> Iterable[SessionEntry]:
-    if not session_library.is_file():
+    """Yield session entries from either a single ``session-library.md`` file
+    or a ``session-library/`` directory of per-sport markdown files.
+
+    All entries share the same ``file_hash`` — for a directory it's a stable
+    hash over the sorted (rel-path, file-hash) pairs so a change to any one
+    file invalidates the whole index (matches the per-file behavior).
+    """
+    if session_library.is_dir():
+        files = sorted(p for p in session_library.glob("*.md") if p.is_file())
+        if not files:
+            return
+        # Combined hash: sorted name + per-file hash, joined.
+        combined = hashlib.sha256()
+        per_file: list[tuple[Path, str]] = []
+        for p in files:
+            h = _file_hash(p)
+            per_file.append((p, h))
+            combined.update(p.name.encode("utf-8"))
+            combined.update(b"\0")
+            combined.update(h.encode("utf-8"))
+            combined.update(b"\0")
+        combined_hash = combined.hexdigest()
+        for p, _h in per_file:
+            yield from _iter_entries_in_file(p, combined_hash)
         return
-    text = session_library.read_text(encoding="utf-8")
-    file_hash = _file_hash(session_library)
+    if session_library.is_file():
+        file_hash = _file_hash(session_library)
+        yield from _iter_entries_in_file(session_library, file_hash)
+
+
+def _iter_entries_in_file(path: Path, file_hash: str) -> Iterable[SessionEntry]:
+    text = path.read_text(encoding="utf-8")
 
     # Map position → sport by walking ## headings.
     sport_spans: list[tuple[int, str]] = []  # (start_offset, canonical_sport)
@@ -959,7 +987,14 @@ def rebuild_sessions(
     """
     t0 = perf_counter()
     root = repo_root()
-    lib = session_library or (root / "knowledge" / "methodology" / "session-library.md")
+    if session_library is None:
+        # Prefer the per-sport directory; fall back to the legacy monolith for
+        # back-compat with old checkouts.
+        lib_dir = root / "knowledge" / "methodology" / "session-library"
+        legacy = root / "knowledge" / "methodology" / "session-library.md"
+        lib = lib_dir if lib_dir.is_dir() else legacy
+    else:
+        lib = session_library
     vdir = vectors_dir or (data_dir() / "vectors")
 
     table = _open_sessions_table(vdir)

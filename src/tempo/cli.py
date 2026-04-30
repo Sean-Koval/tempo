@@ -524,10 +524,10 @@ def vectors_rebuild_cmd(
 def vectors_rebuild_sessions_cmd(
     force: bool = typer.Option(False, "--force", help="Re-embed even if file hash matches."),
 ) -> None:
-    """Embed session-library.md into data/vectors/sessions.lance."""
+    """Embed knowledge/methodology/session-library/ into data/vectors/sessions.lance."""
     from .embed import rebuild_sessions
 
-    console.print("[bold]Sessions[/bold] — embedding session-library.md…")
+    console.print("[bold]Sessions[/bold] — embedding session-library/…")
     try:
         stats = rebuild_sessions(force=force)
     except Exception as e:
