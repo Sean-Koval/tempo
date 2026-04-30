@@ -100,6 +100,52 @@ def test_bootstrap_brief_non_race_rolling(
     assert brief["weeks_until_target"] is None
     # No target date → rolling template chosen.
     assert brief["applicable_phase_template"]["key"] == "rolling_base_block_12wk"
+    # Untyped non-race goal defaults to maintenance.
+    assert brief["goal"]["type"] == "maintenance"
+    assert brief["goal"]["schema_error"] is None
+
+
+def test_bootstrap_brief_performance_target_surfaces_metric(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A goals.yaml entry with type=performance_target surfaces metric/current/target
+    so the skill can route to compose_for_goal correctly."""
+    (tmp_path / "athlete").mkdir()
+    (tmp_path / "athlete" / "profile.yaml").write_text(
+        "athlete:\n  name: Sean\nthresholds:\n  ftp_w: 248\n",
+        encoding="utf-8",
+    )
+    (tmp_path / "athlete" / "race-calendar.yaml").write_text("races: []\n", encoding="utf-8")
+    (tmp_path / "athlete" / "goals.yaml").write_text(
+        "goals:\n"
+        "  - id: 2026-ftp-280\n"
+        "    type: performance_target\n"
+        "    metric: ftp_w\n"
+        "    current: 248\n"
+        "    target: 280\n"
+        "    by_date: 2099-12-01\n",
+        encoding="utf-8",
+    )
+    (tmp_path / "athlete" / "preferences.md").write_text(
+        "# Prefs\n\n## Hard constraints\n\n- Long-run progression max +10%/wk.\n",
+        encoding="utf-8",
+    )
+    (tmp_path / "athlete" / "injury-log.md").write_text(
+        "# Log\n\n## Active\n\n_No active flags._\n", encoding="utf-8"
+    )
+    (tmp_path / "knowledge" / "methodology").mkdir(parents=True)
+    (tmp_path / "knowledge" / "methodology" / "phases.yaml").write_text(
+        "ftp_target_16wk:\n  total_weeks: 16\n", encoding="utf-8"
+    )
+    _patch_roots(monkeypatch, tmp_path)
+
+    brief = briefs.bootstrap_plan_brief("2026-ftp-280")
+    assert brief["goal"]["type"] == "performance_target"
+    assert brief["goal"]["metric"] == "ftp_w"
+    assert brief["goal"]["current"] == 248
+    assert brief["goal"]["target"] == 280
+    assert brief["goal"]["target_date"] == "2099-12-01"
+    assert brief["goal"]["schema_error"] is None
 
 
 def test_bootstrap_brief_unknown_goal_raises(

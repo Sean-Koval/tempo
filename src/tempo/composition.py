@@ -36,6 +36,7 @@ What's deliberately *not* yet here:
 from __future__ import annotations
 
 from dataclasses import dataclass
+from datetime import date
 from pathlib import Path
 from typing import Any, Literal
 
@@ -181,12 +182,17 @@ def validate_chain(
     library: dict[str, PhaseDef] | None = None,
     rules: list[CompositionRule] | None = None,
     has_target_date: bool = True,
+    requires_taper: bool = True,
     active_injury_preconditions: frozenset[str] = frozenset(),
 ) -> list[CompositionViolation]:
     """Walk every composition rule against the chain.
 
     HARD violations should normally block; SOFT ones are advisory.
     Caller decides what to do with WATCH/SOFT violations.
+
+    ``requires_taper`` toggles the "chain must end in taper_*" rule —
+    race chains require a taper, non-race performance-target chains
+    end in ``deload_test`` instead.
     """
     library = library or load_phase_library()
     rules = rules or load_composition_rules()
@@ -234,7 +240,7 @@ def validate_chain(
 
     # End with taper for A-race
     rule = rule_map.get("chain_must_end_taper_for_a_race")
-    if rule and has_target_date and not chain.phases[-1].id.startswith("taper"):
+    if rule and has_target_date and requires_taper and not chain.phases[-1].id.startswith("taper"):
         out.append(
             CompositionViolation(
                 rule_id=rule.id,
@@ -527,6 +533,7 @@ def compose_chain(
     distance: str | None,
     runway_weeks: int,
     has_target_date: bool = True,
+    requires_taper: bool = True,
     sport_focus_hint: dict[str, float] | None = None,
     active_injury_types: list[str] | None = None,
     root: Path | None = None,
@@ -584,6 +591,7 @@ def compose_chain(
         library=library,
         rules=rules,
         has_target_date=has_target_date,
+        requires_taper=requires_taper,
         active_injury_preconditions=injury_pre,
     )
     hard = [v for v in violations if v.severity == "HARD"]
@@ -593,6 +601,102 @@ def compose_chain(
             violations=violations,
         )
     return chain
+
+
+# --- Goal-aware composition ----------------------------------------------
+#
+# Higher-level entry point. Skills (bootstrap-plan) call this with a typed
+# :class:`tempo.goals.Goal`; the composer figures out the right template
+# distance, runway, and whether a taper is required from the goal type.
+
+
+# Default runway when a non-race goal has no by_date — paired with the
+# template name's nominal length. The composer's stretch logic adjusts to
+# fit the actual phase duration_ranges.
+_DEFAULT_RUNWAY_BY_DISTANCE: dict[str, int] = {
+    "ftp_target": 16,
+    "css_target": 12,
+    "strength_peak": 12,
+    "base_building": 8,
+    "rolling_base_block": 12,
+}
+
+
+def compose_for_goal(
+    goal: _GoalLike,
+    *,
+    today: date | None = None,
+    runway_weeks_override: int | None = None,
+    active_injury_types: list[str] | None = None,
+    root: Path | None = None,
+) -> PhaseChain:
+    """Compose a phase chain anchored on a typed :class:`tempo.goals.Goal`.
+
+    Routes by ``goal.type``:
+
+    - ``race`` -> existing race-anchored composer; taper required.
+    - ``performance_target`` -> metric maps to a synthetic distance
+      (ftp_target, css_target, strength_peak); chain ends in deload_test.
+    - ``maintenance`` -> base_building (dated) or rolling_base_block (open).
+    - ``streak`` / ``adventure`` -> :class:`CompositionError` (clear
+      "not supported by composer yet" — these need different anchoring
+      and will land in follow-up tickets).
+
+    Runway is computed from ``today`` to ``goal.target_date``; an override
+    is allowed for tests and for non-dated goals where the default
+    template length is the right baseline.
+
+    Raises :class:`CompositionError` for unsupported metrics with the
+    list of supported metrics in the violation message — the agent can
+    surface that to the user without guessing.
+    """
+    # Local import keeps composition.py importable without goals.py at
+    # module load — avoids a cycle if goals.py ever imports composition.
+    from .goals import GoalSchemaError, template_distance_for
+
+    is_race = goal.type == "race"
+
+    try:
+        distance = template_distance_for(goal)
+    except GoalSchemaError as e:
+        raise CompositionError(
+            str(e),
+            violations=[
+                CompositionViolation(
+                    rule_id="goal_schema",
+                    severity="HARD",
+                    message=v,
+                )
+                for v in (e.violations or [str(e)])
+            ],
+        ) from e
+
+    today_d = today or date.today()
+    if runway_weeks_override is not None:
+        runway = runway_weeks_override
+    elif goal.target_date is not None:
+        delta_days = (goal.target_date - today_d).days
+        runway = max(1, delta_days // 7)
+    else:
+        runway = _DEFAULT_RUNWAY_BY_DISTANCE.get(distance, 12)
+
+    return compose_chain(
+        distance=distance,
+        runway_weeks=runway,
+        has_target_date=goal.target_date is not None,
+        requires_taper=is_race,
+        active_injury_types=active_injury_types,
+        root=root,
+    )
+
+
+# Forward-declared duck type so we don't import goals.Goal at module top
+# (avoid the import cycle described above).
+class _GoalLike:  # pragma: no cover - typing aid
+    type: str
+    target_date: date | None
+    distance: str | None
+    metric: str | None
 
 
 def _prepend_injury_preblock(
@@ -662,6 +766,7 @@ __all__ = [
     "PhaseDef",
     "Severity",
     "compose_chain",
+    "compose_for_goal",
     "derive_injury_preconditions",
     "load_composition_rules",
     "load_named_templates",

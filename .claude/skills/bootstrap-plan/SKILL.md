@@ -53,36 +53,64 @@ Flag any `unvetted` snippet you use.
 
 ## Step 4 — Compose the phase chain
 
-Use `tempo.composition.compose_chain` rather than picking a template by
-hand. It walks `knowledge/methodology/phases.yaml` (`phase_library` +
-`composition_rules` + `templates`) and returns a typed `PhaseChain` valid
+Use `tempo.composition.compose_for_goal` rather than picking a template
+by hand. It accepts a typed `tempo.goals.Goal`, picks the right template
+from `knowledge/methodology/phases.yaml` based on `goal.type` + (for
+non-race goals) `goal.metric`, and returns a typed `PhaseChain` valid
 against every HARD composition rule.
 
 ```python
-from tempo import composition
+from tempo import composition, goals, athlete
 
-chain = composition.compose_chain(
-    distance=goal["distance"],         # "marathon" | "half_ironman" | "gran_fondo" | ...
-    runway_weeks=brief["weeks_until_target"],
-    has_target_date=goal.get("date") is not None,
+match = athlete.find_goal(goal_id)              # GoalMatch from goals.yaml or race-calendar.yaml
+goal = goals.from_match(match)                   # typed Goal — race | performance_target | maintenance | …
+
+chain = composition.compose_for_goal(
+    goal,
     # Map brief['active_injuries'] descriptions into known type tags:
     # 'BSI', 'stress_fracture', 'calf_strain', 'achilles', 'plantar_fasciitis',
-    # 'itbs', 'lower_back'. See _INJURY_PRECONDITION_BY_TYPE in composition.py
-    # for the current mapping; unknown tags map to no preconditions.
-    active_injury_types=injury_types_from_flags(brief["active_injuries"]),
+    # 'itbs', 'lower_back'. See _INJURY_PRECONDITION_BY_TYPE in composition.py.
+    active_injury_types=composition.injury_types_from_flags(brief["active_injuries"]),
 )
 ```
 
-The composer covers run-only (5K, 10K, half-marathon, marathon),
-bike-only (gran fondo, road race), swim-only (masters meet), and
-multisport (Olympic, 70.3, IM) distances. Active injuries that map to
-`active_injury_no_impact` (e.g. BSI, stress fracture) automatically
-prepend `rehab_bike_only` + an appropriate `return_to_*` phase.
+`compose_for_goal` covers two anchor shapes:
+
+- **Race anchor** — `race-calendar.yaml` entry with `date` + `distance`.
+  Picks the matching distance template (5K, half-marathon, marathon,
+  gran fondo, road race, masters swim meet, Olympic, 70.3, IM). Chain
+  ends in `taper_*`.
+
+- **Performance-target anchor** — `goals.yaml` entry with
+  `type: performance_target` + `metric` + `target` + `by_date`. Picks
+  the metric-specific template:
+
+  | metric | template |
+  |---|---|
+  | `ftp_w` | `ftp_target_16wk` (base → ftp_progression → vo2_polarisation → deload_test) |
+  | `css_pace` / `css_pace_s_per_100m` | `css_target_12wk` |
+  | `squat_1rm_kg` / `deadlift_1rm_kg` | `strength_peak_12wk` |
+
+  Chain ends in `deload_test` (1-2 wk freshen + measurement). The "must
+  end in taper" rule does NOT apply — non-race goals don't need a
+  performance-day taper.
+
+  An unsupported metric raises `CompositionError` listing the supported
+  set — surface that to Sean rather than picking a generic template.
+
+- **Maintenance anchor** — `type: maintenance` (with or without
+  `by_date`). Routes to `base_building_8wk` (dated) or
+  `rolling_base_block_12wk` (open-ended).
+
+Active injuries that map to `active_injury_no_impact` (e.g. BSI, stress
+fracture) automatically prepend `rehab_bike_only` + an appropriate
+`return_to_*` phase to multisport / run-anchored chains.
 
 If the runway exceeds the template, the composer extends the earliest
-base phase rather than diluting build/peak. If a distance isn't covered,
-it raises `CompositionError` — surface this to Sean and recommend either
-picking a closer distance or filing a ticket to add a template entry.
+base phase rather than diluting build/peak. If a distance / metric
+isn't covered, it raises `CompositionError` — surface this to Sean
+and recommend either choosing a supported metric, picking a closer
+distance, or filing a ticket to add a template entry.
 
 Use the returned `chain.phases` to populate `plan.yaml`'s `phases:`
 block. The composer fills in `intensity_distribution`, `weekly_tss_per_hour`,

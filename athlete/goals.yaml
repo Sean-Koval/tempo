@@ -1,21 +1,61 @@
 # Non-race goals. Parallel to race-calendar.yaml; both can drive bootstrap-plan.
 #
-# Goals without a hard end date get a rolling 12-week block with checkpoints.
-# Goals with an end date get full phase back-calculation.
+# Each goal entry has a `type:` that controls how the composer anchors a chain:
+#
+#   - performance_target: metric + target + by_date → metric-specific block
+#                         (ftp_target_16wk, css_target_12wk, strength_peak_12wk).
+#                         Chain ends in deload_test (freshen + measurement).
+#
+#   - maintenance:        hold current fitness; metric optional. With by_date
+#                         routes to base_building_8wk; open-ended routes to
+#                         rolling_base_block_12wk.
+#
+#   - streak / adventure: declared, but not yet anchored by the composer
+#                         (future tickets — see story 07 §9).
+#
+# Untyped non-race entries default to `performance_target` if metric+target
+# are present, else `maintenance`. An explicit `type:` always wins.
 
 goals: []
 
-# Example — uncomment and edit:
+# Examples — uncomment and edit:
 #
 # goals:
-#   - id: 2026-ftp-300w
-#     title: "Raise bike FTP to 300W"
-#     target_date: 2026-09-01   # optional; omit for open-ended
-#     metric: ftp_w
-#     current: 260              # will be pulled from profile.yaml at bootstrap
-#     target: 300
+#   - id: 2026-ftp-280
+#     type: performance_target
+#     metric: ftp_w               # supported: ftp_w, css_pace, css_pace_s_per_100m,
+#                                 #            squat_1rm_kg, deadlift_1rm_kg
+#     current: 248                # will be cross-checked against profile.yaml
+#     target: 280
+#     by_date: 2026-08-16         # 16 weeks → ftp_target_16wk
 #     constraints:
 #       weekly_hours_max: 12
 #       priority_vs_run: "run takes precedence if conflict"
 #     notes: |
-#       Step-ramp approach — 3-week blocks ending in a test.
+#       Sweet-spot → threshold ramp + a polarised VO2 block, then test.
+#
+#   - id: 2026-css-target
+#     type: performance_target
+#     metric: css_pace_s_per_100m
+#     current: 85.0               # current CSS in seconds per 100m
+#     target: 80.0
+#     by_date: 2026-08-01
+#
+#   - id: 2026-squat-170
+#     type: performance_target
+#     metric: squat_1rm_kg
+#     current: 145
+#     target: 170
+#     by_date: 2026-09-30
+#     notes: |
+#       Endurance held in Z2 maintenance; no concurrent quality run blocks.
+#
+#   - id: 2026-spring-base
+#     type: maintenance
+#     metric: ftp_w               # optional — names the metric we'll watch
+#     current: 260
+#     by_date: 2026-06-01         # dated maintenance → base_building_8wk
+#
+#   - id: 2026-open-base
+#     type: maintenance           # no by_date → rolling_base_block_12wk
+#     notes: "Year-round durability between race seasons."

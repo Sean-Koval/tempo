@@ -281,3 +281,227 @@ def test_injury_types_from_flags_empty_for_unknown_injury() -> None:
     flags = ["2026-04-25 — left ankle sprain — severity 2"]
     types = composition.injury_types_from_flags(flags)
     assert types == []  # ankle sprain not in known mapping; agent surfaces in rationale
+
+
+# --- Non-race performance-target composition (US-07) ----------------------
+#
+# The composer needs to anchor on goals.yaml performance targets, not just
+# race-calendar.yaml races. Lena/Tomás/Wes from US-07 each test a
+# different metric → template path.
+
+
+from datetime import date  # noqa: E402  -- placed near non-race tests for locality
+
+from tempo import goals  # noqa: E402
+
+
+def _perf_target_match(
+    *,
+    gid: str,
+    metric: str,
+    current: float,
+    target: float,
+    by_date: str | None = "2026-08-16",
+) -> goals.athlete.GoalMatch:
+    """Synthesize a non-race GoalMatch for a perf-target test."""
+    data: dict = {
+        "id": gid,
+        "type": "performance_target",
+        "metric": metric,
+        "current": current,
+        "target": target,
+    }
+    if by_date is not None:
+        data["by_date"] = by_date
+    return goals.athlete.GoalMatch(kind="non_race", data=data)
+
+
+def test_compose_for_goal_lena_ftp_target_16wk() -> None:
+    """Lena: ftp_w 248→280 by 2026-08-16 (16 weeks out from 2026-04-26)."""
+    match = _perf_target_match(
+        gid="2026-ftp-280",
+        metric="ftp_w",
+        current=248,
+        target=280,
+        by_date="2026-08-16",
+    )
+    goal = goals.from_match(match)
+    chain = composition.compose_for_goal(goal, today=date(2026, 4, 26))
+    ids = [p.id for p in chain.phases]
+    assert chain.template_id == "ftp_target_16wk"
+    assert "ftp_progression_block" in ids
+    assert "vo2_polarisation_block" in ids
+    assert ids[-1] == "deload_test"
+    # No taper required for non-race goals — ends in deload, not taper_*.
+    assert not ids[-1].startswith("taper")
+    assert chain.total_weeks == 16
+
+
+def test_compose_for_goal_wes_strength_peak() -> None:
+    """Wes: squat_1rm_kg target → strength-led chain."""
+    match = _perf_target_match(
+        gid="squat-1rm-2026",
+        metric="squat_1rm_kg",
+        current=145,
+        target=170,
+        by_date="2026-09-30",
+    )
+    goal = goals.from_match(match)
+    chain = composition.compose_for_goal(goal, today=date(2026, 4, 26))
+    ids = [p.id for p in chain.phases]
+    assert chain.template_id == "strength_peak_12wk"
+    assert "strength_peak_block" in ids
+    assert ids[-1] == "deload_test"
+    # Strength-dominant sport_focus on the peaking block.
+    peak = next(p for p in chain.phases if p.id == "strength_peak_block")
+    assert peak.sport_focus.get("strength", 0) >= 0.5
+
+
+def test_compose_for_goal_css_target() -> None:
+    match = _perf_target_match(
+        gid="css-pace-2026",
+        metric="css_pace_s_per_100m",
+        current=85.0,
+        target=80.0,
+        by_date="2026-08-01",
+    )
+    goal = goals.from_match(match)
+    chain = composition.compose_for_goal(goal, today=date(2026, 4, 26))
+    assert chain.template_id == "css_target_12wk"
+    assert "css_progression_block" in [p.id for p in chain.phases]
+    assert chain.phases[-1].id == "deload_test"
+
+
+def test_compose_for_goal_unsupported_metric_clear_error() -> None:
+    """Unknown metric is rejected with a CompositionError listing supported metrics —
+    no silent fallback to a generic chain."""
+    match = goals.athlete.GoalMatch(
+        kind="non_race",
+        data={
+            "id": "vert-jump-2026",
+            "type": "performance_target",
+            "metric": "vertical_jump_cm",
+            "current": 50,
+            "target": 60,
+            "by_date": "2026-09-01",
+        },
+    )
+    goal = goals.from_match(match)
+    with pytest.raises(composition.CompositionError) as exc_info:
+        composition.compose_for_goal(goal, today=date(2026, 4, 26))
+    assert exc_info.value.violations
+    # The violation surfaces the metric for the agent to relay.
+    assert any("vertical_jump_cm" in v.message for v in exc_info.value.violations)
+
+
+def test_compose_for_goal_maintenance_dated_uses_base_building() -> None:
+    match = goals.athlete.GoalMatch(
+        kind="non_race",
+        data={
+            "id": "maintain-2026",
+            "type": "maintenance",
+            "metric": "ftp_w",
+            "current": 260,
+            "by_date": "2026-08-01",
+        },
+    )
+    goal = goals.from_match(match)
+    chain = composition.compose_for_goal(goal, today=date(2026, 6, 1))
+    assert chain.template_id == "base_building_8wk"
+    assert chain.phases[-1].id == "deload_test"
+
+
+def test_compose_for_goal_streak_not_supported() -> None:
+    """Streak/adventure types raise — they need different anchoring (future ticket)."""
+    match = goals.athlete.GoalMatch(
+        kind="non_race",
+        data={
+            "id": "100-day-ride-streak",
+            "type": "streak",
+            "by_date": "2026-09-01",
+        },
+    )
+    goal = goals.from_match(match)
+    with pytest.raises(composition.CompositionError):
+        composition.compose_for_goal(goal, today=date(2026, 4, 26))
+
+
+def test_compose_for_goal_race_path_still_works() -> None:
+    """Existing race-calendar-anchored chains keep working through the new entry point."""
+    match = goals.athlete.GoalMatch(
+        kind="race",
+        data={
+            "id": "2026-marathon",
+            "distance": "marathon",
+            "date": "2026-09-01",
+        },
+    )
+    goal = goals.from_match(match)
+    chain = composition.compose_for_goal(goal, today=date(2026, 4, 26))
+    # Race chain DOES end in taper_*.
+    assert chain.phases[-1].id.startswith("taper")
+
+
+def test_from_match_rejects_perf_target_without_metric() -> None:
+    bad = goals.athlete.GoalMatch(
+        kind="non_race",
+        data={
+            "id": "broken",
+            "type": "performance_target",
+            "target": 280,
+            "by_date": "2026-08-01",
+        },
+    )
+    with pytest.raises(goals.GoalSchemaError) as exc_info:
+        goals.from_match(bad)
+    assert any("metric" in v for v in exc_info.value.violations)
+
+
+def test_perf_target_runway_overshoot_extends_base() -> None:
+    """Extra runway extends the earliest base phase, not the progression
+    blocks — same simplification the race path uses."""
+    match = _perf_target_match(
+        gid="long-ftp",
+        metric="ftp_w",
+        current=240,
+        target=260,
+        by_date=None,
+    )
+    goal = goals.from_match(match)
+    chain = composition.compose_for_goal(
+        goal, today=date(2026, 4, 26), runway_weeks_override=20
+    )
+    assert chain.total_weeks == 20
+    # Progression block stays in its 4-6 wk band.
+    progression = next(p for p in chain.phases if p.id == "ftp_progression_block")
+    assert 4 <= progression.weeks <= 6
+    # Extra weeks landed in base_aerobic_bike.
+    base = next(p for p in chain.phases if p.id == "base_aerobic_bike")
+    assert base.weeks > 4
+
+
+def test_validate_chain_requires_taper_flag() -> None:
+    """Non-race chains end in deload_test — the taper rule should not fire."""
+    library = composition.load_phase_library()
+    chain = composition.PhaseChain(
+        template_id=None,
+        distance="ftp_target",
+        sport_focus={"bike": 1.0},
+        phases=[
+            composition._compose_phase(library["base_aerobic_bike"], 4),
+            composition._compose_phase(library["ftp_progression_block"], 6),
+            composition._compose_phase(library["deload_test"], 2),
+        ],
+    )
+    violations = composition.validate_chain(
+        chain, has_target_date=True, requires_taper=False
+    )
+    rule_ids = {v.rule_id for v in violations}
+    assert "chain_must_end_taper_for_a_race" not in rule_ids
+
+
+def test_supported_perf_metrics_listed_for_introspection() -> None:
+    """Agents should be able to read the supported metric list for error UX."""
+    assert "ftp_w" in goals.SUPPORTED_PERF_METRICS
+    assert "squat_1rm_kg" in goals.SUPPORTED_PERF_METRICS
+    assert "css_pace_s_per_100m" in goals.SUPPORTED_PERF_METRICS

@@ -132,10 +132,32 @@ def bootstrap_plan_brief(goal_id: str) -> dict[str, Any]:
         raise UnknownGoalError(goal_id, athlete.all_goal_ids())
 
     data = match.data
-    target_d = _parse_target_date(data.get("target_date") or data.get("date"))
+    target_d = _parse_target_date(
+        data.get("by_date") or data.get("target_date") or data.get("date")
+    )
     weeks_until = _weeks_between(date.today(), target_d) if target_d else None
 
+    # Try the typed-Goal path. Legacy / malformed entries fall back to the
+    # raw shape so the brief still assembles — surfacing the problem as a
+    # ``goal_schema_error`` field rather than failing the whole brief.
+    goal_type: str | None = None
+    schema_error: str | None = None
+    metric: str | None = data.get("metric")
+    current = data.get("current")
+    target_value = data.get("target")
     distance = data.get("distance")
+    try:
+        from . import goals as _goals_mod
+
+        typed = _goals_mod.from_match(match)
+        goal_type = typed.type
+        metric = typed.metric
+        current = typed.current
+        target_value = typed.target
+        distance = typed.distance or distance
+    except Exception as e:  # GoalSchemaError or anything yaml-shape-related
+        schema_error = str(e)
+
     template = plans.phase_template_for(
         distance=distance, has_target_date=target_d is not None
     )
@@ -150,15 +172,20 @@ def bootstrap_plan_brief(goal_id: str) -> dict[str, Any]:
         "goal": {
             "id": goal_id,
             "kind": match.kind,
+            "type": goal_type,
             "title": data.get("title") or data.get("name"),
             "target_date": target_d.isoformat() if target_d else None,
             "distance": distance,
+            "metric": metric,
+            "current": current,
+            "target": target_value,
             "priority": data.get("priority"),
             "location": data.get("location"),
             "expected_conditions": data.get("expected_conditions"),
             "constraints": data.get("constraints"),
             "notes": data.get("notes"),
             "goals": data.get("goals"),
+            "schema_error": schema_error,
         },
         "today": date.today().isoformat(),
         "weeks_until_target": weeks_until,

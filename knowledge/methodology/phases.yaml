@@ -376,6 +376,73 @@ phase_library:
     valid_successors: [base_aerobic_multisport]
     preconditions: [pt_clearance]
 
+  # ---- NON-RACE PERFORMANCE-TARGET BLOCKS ---------------------------------
+  # These anchor non-race goals: FTP target, CSS target, 1RM target, base
+  # building. They live alongside the race phases above; the composer
+  # picks them via templates indexed by a synthetic 'distance' string
+  # (ftp_target, css_target, strength_peak, base_building).
+
+  ftp_progression_block:
+    sport_focus: { bike: 0.85, strength: 0.15 }
+    character: "sweet-spot → threshold ramp; 88-95% FTP work; volume held"
+    duration_range: [4, 6]
+    intensity_distribution: { z1_z2: 65, z3: 25, z4_plus: 10 }
+    weekly_tss_per_hour: [70, 90]
+    key_sessions: [sweet_spot_4x8, sweet_spot_3x15, threshold_2x20, recovery_spin, long_ride_z2]
+    valid_predecessors: [base_aerobic_bike, base_durability_bike]
+    valid_successors: [vo2_polarisation_block, build_bike, deload_test]
+    preconditions: []
+
+  vo2_polarisation_block:
+    sport_focus: { bike: 0.85, strength: 0.15 }
+    character: "VO2max polarised — Z1/Z2 base + sharp Z5 intervals"
+    duration_range: [2, 4]
+    intensity_distribution: { z1_z2: 80, z3: 5, z4_plus: 15 }
+    weekly_tss_per_hour: [65, 85]
+    key_sessions: [vo2_5x3, vo2_4x4, vo2_3x5, easy_aerobic_ride, long_ride_z2]
+    valid_predecessors: [ftp_progression_block, base_durability_bike, build_bike]
+    valid_successors: [deload_test, peak_bike, taper_bike]
+    preconditions: []
+
+  css_progression_block:
+    sport_focus: { swim: 0.8, strength: 0.2 }
+    character: "CSS threshold ladder — 100s/200s/400s at goal pace; technique held"
+    duration_range: [4, 6]
+    intensity_distribution: { z1_z2: 70, z3: 20, z4_plus: 10 }
+    weekly_tss_per_hour: [50, 65]
+    key_sessions: [css_8x100, css_4x200, css_2x400, technique_swim, aerobic_swim_set]
+    valid_predecessors: [base_aerobic_swim]
+    valid_successors: [deload_test, build_swim, peak_swim]
+    preconditions: []
+
+  strength_peak_block:
+    sport_focus: { strength: 0.7, bike: 0.2, run: 0.1 }
+    character: "1RM peaking; lower-body focus; endurance held in Z2 maintenance"
+    duration_range: [4, 6]
+    intensity_distribution: { z1_z2: 85, z3: 10, z4_plus: 5 }
+    weekly_tss_per_hour: [40, 55]
+    key_sessions: [squat_3x3_85pct, squat_2x2_90pct, deadlift_3x3_85pct, accessory_lower, easy_aerobic_ride]
+    valid_predecessors: [null, base_aerobic_bike, base_aerobic_run, base_aerobic_multisport]
+    valid_successors: [deload_test]
+    preconditions: []
+
+  deload_test:
+    sport_focus: { bike: 0.5, run: 0.2, swim: 0.1, strength: 0.2 }
+    character: "1-2wk freshen + measurement of the goal metric"
+    duration_range: [1, 2]
+    intensity_distribution: { z1_z2: 80, z3: 10, z4_plus: 10 }
+    weekly_tss_per_hour: [30, 50]
+    key_sessions: [easy_spin, ftp_test_20min, css_test_400m, squat_1rm_test, recovery_swim]
+    valid_predecessors: [
+      ftp_progression_block, vo2_polarisation_block,
+      css_progression_block, strength_peak_block,
+      base_aerobic_bike, base_aerobic_swim, base_aerobic_run,
+      base_aerobic_multisport, base_durability_multisport,
+      peak_bike, peak_run, peak_swim,
+    ]
+    valid_successors: [null]
+    preconditions: []
+
 
 # ===========================================================================
 # Composition rules — gates the composer enforces (or flags) when assembling
@@ -507,3 +574,42 @@ templates:
       - { phase: build_multisport,           weeks: 6 }
       - { phase: peak_multisport,            weeks: 2 }
       - { phase: taper_multisport,           weeks: 2 }
+
+  # Non-race performance-target templates. Indexed by synthetic
+  # 'distance' strings emitted by tempo.goals.template_distance_for —
+  # these are not real race distances. End in deload_test rather than
+  # taper, so the composer's race-only "must end in taper" rule is
+  # bypassed by passing requires_taper=False at compose-time.
+
+  ftp_target_16wk:
+    distance: ftp_target
+    sport_focus: { bike: 0.85, strength: 0.15 }
+    chain:
+      - { phase: base_aerobic_bike,        weeks: 4 }
+      - { phase: ftp_progression_block,    weeks: 6 }
+      - { phase: vo2_polarisation_block,   weeks: 4 }
+      - { phase: deload_test,              weeks: 2 }
+
+  css_target_12wk:
+    distance: css_target
+    sport_focus: { swim: 0.8, strength: 0.2 }
+    chain:
+      - { phase: base_aerobic_swim,        weeks: 4 }
+      - { phase: css_progression_block,    weeks: 6 }
+      - { phase: deload_test,              weeks: 2 }
+
+  strength_peak_12wk:
+    distance: strength_peak
+    sport_focus: { strength: 0.7, bike: 0.2, run: 0.1 }
+    chain:
+      - { phase: base_aerobic_bike,        weeks: 5 }
+      - { phase: strength_peak_block,      weeks: 6 }
+      - { phase: deload_test,              weeks: 1 }
+
+  base_building_8wk:
+    distance: base_building
+    sport_focus: { bike: 0.5, run: 0.3, swim: 0.1, strength: 0.1 }
+    chain:
+      - { phase: base_aerobic_multisport,    weeks: 4 }
+      - { phase: base_durability_multisport, weeks: 3 }
+      - { phase: deload_test,                weeks: 1 }
