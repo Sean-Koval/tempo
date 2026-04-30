@@ -19,6 +19,7 @@ from typing import Any
 import yaml
 
 from . import athlete, plans, queries
+from . import patterns as patterns_mod
 from .db import connect, init_schema
 
 
@@ -284,6 +285,7 @@ def plan_week_brief(
     prior_adherence: dict[str, Any] = {"week_id": prev2_id, "planned_count": 0}
     recent_week_tss = {prev1_id: 0.0, prev2_id: 0.0}
     delta_ctl_vs_plan: float | None = None
+    adherence_patterns: dict[str, Any] = {"status": "insufficient_data", "signals": []}
     db_error: str | None = None
 
     try:
@@ -314,6 +316,11 @@ def plan_week_brief(
             if target_mid is not None and latest_load and latest_load.get("ctl") is not None:
                 target_ss_ctl = target_mid / 7.0
                 delta_ctl_vs_plan = float(latest_load["ctl"]) - target_ss_ctl
+            adherence_patterns = patterns_mod.adherence_patterns(
+                conn,
+                window_weeks=8,
+                end_date=plans.week_start(week_id) - timedelta(days=1),
+            )
         finally:
             conn.close()
 
@@ -356,6 +363,7 @@ def plan_week_brief(
         "recent_adherence": recent_adherence,
         "prior_adherence": prior_adherence,
         "recent_weekly_tss": recent_week_tss,
+        "adherence_patterns": adherence_patterns,
         "active_injuries": athlete.active_injury_flags(),
         "hard_constraints": athlete.hard_constraints(),
         "athlete_state": _profile_summary(profile),

@@ -23,6 +23,7 @@ from pathlib import Path
 from typing import Any, Literal
 
 from . import athlete as _athlete
+from . import patterns as _patterns
 from . import plans as _plans
 from .calibration import calibration_debt
 from .db import connect, init_schema
@@ -87,6 +88,7 @@ class StatusSnapshot:
     last_sync_ts: str | None = None
     sync_age_seconds: int | None = None
     active_injury_flags: list[str] = field(default_factory=list)
+    top_pattern_signal: dict[str, Any] | None = None
     rows: list[StatusRow] = field(default_factory=list)
 
     def to_json(self) -> str:
@@ -133,6 +135,7 @@ def build_snapshot(
         _fill_calibration_section(snap, conn=conn, root=root)
         _fill_sync_section(snap, today=today)
         _fill_injury_section(snap, root=root)
+        _fill_patterns_section(snap, conn=conn, root=root, today=today)
     finally:
         if owns_conn:
             conn.close()
@@ -232,6 +235,34 @@ def _fill_injury_section(snap: StatusSnapshot, *, root: Path | None) -> None:
     snap.active_injury_flags = _athlete.active_injury_flags(root=root)
 
 
+def _fill_patterns_section(
+    snap: StatusSnapshot,
+    *,
+    conn: sqlite3.Connection,
+    root: Path | None,
+    today: date,
+) -> None:
+    """Surface the strongest adherence pattern signal, if any.
+
+    Status only shows the *top* signal — the planning skill's preflight
+    sees the full list. The status row is a one-liner, so anything beyond
+    the worst offender is noise here.
+    """
+    try:
+        result = _patterns.adherence_patterns(
+            conn,
+            window_weeks=8,
+            end_date=today,
+            repo_root_override=root,
+        )
+    except sqlite3.Error:
+        return
+    signals = result.get("signals") or []
+    if not signals:
+        return
+    snap.top_pattern_signal = signals[0]
+
+
 def _read_last_sync_event(path: Path) -> datetime | None:
     """Return the timestamp of the most-recent ``sync`` event, or None.
 
@@ -287,6 +318,8 @@ def _build_rows(snap: StatusSnapshot) -> list[StatusRow]:
     rows.append(_sync_row(snap))
     if snap.active_injury_flags:
         rows.append(_injury_row(snap))
+    if snap.top_pattern_signal is not None:
+        rows.append(_pattern_row(snap))
     return rows
 
 
@@ -465,6 +498,25 @@ def _injury_row(snap: StatusSnapshot) -> StatusRow:
         value=f"{len(snap.active_injury_flags)} active flag(s)",
         severity="alert",
         detail="; ".join(snap.active_injury_flags[:2]),
+    )
+
+
+def _pattern_row(snap: StatusSnapshot) -> StatusRow:
+    """One-liner for the dominant adherence pattern (8-week window).
+
+    Detail line names the dimension so the user knows whether to treat it
+    as schedule-driven (weekday/context) or sport-specific.
+    """
+    s = snap.top_pattern_signal or {}
+    dim = s.get("dimension", "?")
+    val = s.get("value", "?")
+    msg = s.get("message", "")
+    detail = f"{dim}={val} drop-off — see /plan-training-week brief for full list."
+    return StatusRow(
+        label="Patterns",
+        value=msg,
+        severity="warn",
+        detail=detail,
     )
 
 

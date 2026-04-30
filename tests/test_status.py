@@ -112,6 +112,49 @@ def test_snapshot_active_injury_renders_alert(isolated_root: Path, empty_db):
     assert inj_row.severity == "alert"
 
 
+def test_snapshot_emits_pattern_row_when_signal_present(
+    isolated_root: Path, empty_db
+):
+    """Status surfaces the top adherence pattern signal as a one-liner row."""
+    end = date.today()
+    week_end_sunday = end - timedelta(days=end.weekday() + 1) if end.weekday() != 6 else end
+    # 8 weeks: Thursday completes 1/8, other days complete 7/8 → strong drop-off.
+    for w in range(8):
+        sunday = week_end_sunday - timedelta(weeks=w)
+        monday = sunday - timedelta(days=6)
+        for d_off in range(7):
+            day = monday + timedelta(days=d_off)
+            wd = day.weekday()
+            sid = f"s-{day.isoformat()}"
+            week_id = f"{day.isocalendar()[0]:04d}-W{day.isocalendar()[1]:02d}"
+            empty_db.execute(
+                "INSERT INTO sessions_planned (id, plan_id, week_id, date, sport, target_tss) "
+                "VALUES (?, ?, ?, ?, ?, ?)",
+                (sid, "p", week_id, day.isoformat(), "ride", 60.0),
+            )
+            completed = wd != 3 or w == 0
+            empty_db.execute(
+                "INSERT INTO adherence (planned_session_id, activity_id, completed, reason) "
+                "VALUES (?, ?, ?, ?)",
+                (sid, None, 1 if completed else 0, "completed" if completed else "skipped"),
+            )
+
+    snap = build_snapshot(conn=empty_db, today=end)
+    assert snap.top_pattern_signal is not None
+    assert snap.top_pattern_signal["dimension"] == "weekday"
+    assert snap.top_pattern_signal["value"] == "Thu"
+    pat_row = _row(snap, "Patterns")
+    assert pat_row.severity == "warn"
+    assert "Thu" in pat_row.value
+
+
+def test_snapshot_no_pattern_row_when_insufficient_data(empty_db):
+    """Status omits the Patterns row entirely when there's < 8 weeks of data."""
+    snap = build_snapshot(conn=empty_db)
+    assert snap.top_pattern_signal is None
+    assert all(r.label != "Patterns" for r in snap.rows)
+
+
 def test_snapshot_phase_target_ctl_derived(isolated_root: Path, empty_db):
     plans_dir = isolated_root / "plans" / "demo"
     plans_dir.mkdir(parents=True)

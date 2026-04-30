@@ -27,8 +27,8 @@ missing files), stop and surface the error to the user — don't guess.
 
 The brief contains: `week_id`, `plan`, `ctl_drift`, `recent_load_14d`,
 `readiness`, `recent_adherence` (last week), `prior_adherence` (2 weeks ago),
-`recent_weekly_tss`, `active_injuries`, `hard_constraints`, `athlete_state`,
-`week_already_drafted`.
+`recent_weekly_tss`, `adherence_patterns`, `active_injuries`,
+`hard_constraints`, `athlete_state`, `week_already_drafted`.
 
 ## Step 2 — Macro-drift check
 
@@ -52,6 +52,29 @@ If `active_injuries` is non-empty, they **override any other consideration**:
 - State the affected sessions and the substitutions in the changelog.
 
 This is enforced by rule **R-5 (HARD)** in `decision-rules.md`.
+
+## Step 3b — Honor `adherence_patterns`
+
+Read `adherence_patterns` (8 weeks, all weekday/sport/session-type/context
+buckets z-scored against the overall completion rate). Two cases:
+
+- `status: "insufficient_data"` — < 8 weeks of session history. Skip this step.
+- `status: "ok"` and `signals` non-empty — each entry is a systematic
+  drop-off. Treat each as a soft constraint:
+
+| Dimension | Adjustment |
+| --- | --- |
+| `weekday: <day>` | Don't put a HARD-quality session on `<day>`. Move it ±1 day or swap with a Z2/recovery slot. |
+| `sport: <sport>` | If feasible, slightly under-budget that sport this week — do the higher-completion sport for the substitute TSS. Surface in the changelog. |
+| `session_type: <type>` | Watch — if the missed type was load-critical (e.g. `long_ride_endurance`) flag it; consider reducing target TSS or rescheduling to a higher-completion day. |
+| `context: travel_week` | If this week is itself a travel week (check `journal/` and calendar), drop weekly_tss_target_mid 15-20% and rely on short skip-tolerant sessions. |
+
+The note in the changelog must name the signal verbatim
+(`"Thu adherence 50% vs 88% baseline (8 sessions)"`). Without that, future
+sessions can't audit why the week was shaped this way.
+
+Pattern signals are advisory — they don't override `decision-rules.md` HARD
+rules or `active_injuries`. If both conflict, the HARD rule wins.
 
 ## Step 4 — Read the current phase template
 
