@@ -795,3 +795,334 @@ def test_race_plan_brief_handles_missing_athlete_tested(
     brief = briefs.race_plan_brief("2026-im-lake-placid", today=date(2026, 6, 28))
     assert brief["nutrition"]["exists"] is False
     assert brief["nutrition"]["entries"] == []
+
+
+# --- midpoint_review_brief ---------------------------------------------------
+
+_PLAN_FOR_MIDPOINT = """\
+plan_id: 2026-mid-test
+goal_ref: 2026-mid-test
+template: ironman_full_24wk
+start_date: 2026-03-30
+target_date: 2026-12-01
+total_weeks: 24
+phases:
+  - id: rehab
+    start_week: 2026-W14
+    weeks: 4
+    weekly_tss_target: [200, 280]
+    sport_focus: { bike: 0.85, swim: 0.0, run: 0.0, strength: 0.15 }
+    intensity_distribution: { z1_z2: 90, z3: 8, z4_plus: 2 }
+  - id: base
+    start_week: 2026-W18
+    weeks: 6
+    weekly_tss_target: [600, 750]
+    sport_focus: { bike: 0.5, swim: 0.2, run: 0.3 }
+    intensity_distribution: { z1_z2: 80, z3: 15, z4_plus: 5 }
+"""
+
+
+def _seed_midpoint_repo(tmp_path: Path, *, profile: dict | None = None) -> None:
+    """Seed athlete + plan tuned for midpoint-review tests."""
+    _seed_repo(tmp_path, race=True)
+    if profile is not None:
+        import yaml as _y
+        (tmp_path / "athlete" / "profile.yaml").write_text(
+            _y.safe_dump(profile), encoding="utf-8"
+        )
+    plan_dir = tmp_path / "plans" / "2026-mid-test"
+    plan_dir.mkdir(parents=True)
+    (plan_dir / "plan.yaml").write_text(_PLAN_FOR_MIDPOINT, encoding="utf-8")
+    # Drop the seeded race-plan plan so auto-detect picks ours.
+    other = tmp_path / "plans" / "2026-im-lake-placid"
+    if other.is_dir():
+        import shutil
+        shutil.rmtree(other)
+
+
+def test_midpoint_review_brief_resolves_phase_and_window(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from datetime import date
+
+    _seed_midpoint_repo(tmp_path)
+    _patch_roots(monkeypatch, tmp_path)
+
+    # Week 3 of the 4-week rehab phase (2026-W14 + 2 weeks = 2026-W16).
+    brief = briefs.midpoint_review_brief(
+        week_id="2026-W16", today=date(2026, 4, 19)
+    )
+    assert brief["plan"]["plan_id"] == "2026-mid-test"
+    assert brief["plan"]["phase_id"] == "rehab"
+    assert brief["plan"]["week_in_phase"] == 3
+    assert brief["plan"]["weeks_remaining_in_phase"] == 1
+    assert brief["plan"]["total_phase_weeks"] == 4
+    assert brief["plan"]["weekly_tss_target_mid"] == 240
+    assert brief["plan"]["sport_focus"]["bike"] == 0.85
+    # Phase window covers W14, W15, W16.
+    assert brief["phase_window"]["start_week_id"] == "2026-W14"
+    assert brief["phase_window"]["end_week_id"] == "2026-W16"
+    assert brief["phase_window"]["weeks_elapsed"] == 3
+
+
+def test_midpoint_review_brief_empty_db_safe_shape(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from datetime import date
+
+    # Fresh struct thresholds so the empty DB signal list is genuinely empty
+    # (not contaminated with default-profile stale flags).
+    _seed_midpoint_repo(
+        tmp_path,
+        profile={
+            "athlete": {"weight_kg": 75},
+            "thresholds": {
+                "ftp_w": {"value": 280, "set_at": "2026-04-15", "source": "field_test"},
+                "lthr_bpm": {"value": 168, "set_at": "2026-04-01", "source": "field_test"},
+                "run_threshold_pace": {
+                    "value": "4:15/km", "set_at": "2026-04-01", "source": "race_result",
+                },
+                "swim_css_pace": {
+                    "value": "1:35/100m", "set_at": "2026-04-01", "source": "field_test",
+                },
+                "max_hr": {"value": 188, "set_at": "2026-01-15", "source": "field_test"},
+            },
+        },
+    )
+    _patch_roots(monkeypatch, tmp_path)
+
+    brief = briefs.midpoint_review_brief(
+        week_id="2026-W16", today=date(2026, 4, 19)
+    )
+    assert brief["adherence_phase"]["planned_count"] == 0
+    assert brief["wellness_phase"]["samples_days"] == 0
+    assert brief["target_vs_actual"]["ctl_overall"]["actual"] is None
+    assert brief["signals"] == []
+    assert brief["recent_decisions"] == []
+    assert brief["review_already_exists"] is False
+    assert brief["review_path"].endswith("plans/2026-mid-test/reviews/midpoint-2026-W16.md")
+
+
+def test_midpoint_review_brief_aggregates_adherence_by_sport_and_weekday(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from datetime import date
+
+    _seed_midpoint_repo(tmp_path)
+    _patch_roots(monkeypatch, tmp_path)
+
+    from tempo.db import connect, init_schema
+
+    conn = connect()
+    try:
+        init_schema(conn)
+        # Two ride sessions in W14 (Mon planned+done, Wed planned+missed),
+        # one swim in W15 (Tue planned+done).
+        rows = [
+            ("sp1", "2026-mid-test", "2026-W14", "2026-03-30", "ride", "long_ride", 100.0, 3600),
+            ("sp2", "2026-mid-test", "2026-W14", "2026-04-01", "ride", "z2_ride", 60.0, 2700),
+            ("sp3", "2026-mid-test", "2026-W15", "2026-04-07", "swim", "css_swim", 40.0, 2400),
+        ]
+        for r in rows:
+            conn.execute(
+                "INSERT INTO sessions_planned "
+                "(id, plan_id, week_id, date, sport, library_ref, target_tss, target_duration_s) "
+                "VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+                r,
+            )
+        conn.execute(
+            "INSERT INTO activities (id, start_date, sport, duration_s, tss) VALUES (?, ?, ?, ?, ?)",
+            ("a1", "2026-03-30T07:00:00", "ride", 3600, 95.0),
+        )
+        conn.execute(
+            "INSERT INTO activities (id, start_date, sport, duration_s, tss) VALUES (?, ?, ?, ?, ?)",
+            ("a3", "2026-04-07T06:30:00", "swim", 2300, 38.0),
+        )
+        conn.execute(
+            "INSERT INTO adherence (planned_session_id, activity_id, completed, reason) VALUES (?, ?, ?, ?)",
+            ("sp1", "a1", 1, "completed"),
+        )
+        conn.execute(
+            "INSERT INTO adherence (planned_session_id, activity_id, completed, reason) VALUES (?, ?, ?, ?)",
+            ("sp2", None, 0, "skipped: travel"),
+        )
+        conn.execute(
+            "INSERT INTO adherence (planned_session_id, activity_id, completed, reason) VALUES (?, ?, ?, ?)",
+            ("sp3", "a3", 1, "completed"),
+        )
+    finally:
+        conn.close()
+
+    brief = briefs.midpoint_review_brief(
+        week_id="2026-W16", today=date(2026, 4, 19)
+    )
+    a = brief["adherence_phase"]
+    assert a["planned_count"] == 3
+    assert a["completed_count"] == 2
+    assert a["skipped_count"] == 1
+    assert a["completion_pct"] == round(100.0 * 2 / 3, 1)
+    assert a["by_sport"]["ride"]["planned"] == 2
+    assert a["by_sport"]["ride"]["completed"] == 1
+    assert a["by_sport"]["ride"]["actual_tss"] == 95.0
+    assert a["by_sport"]["swim"]["completed"] == 1
+    # 2026-03-30 is Monday, 2026-04-01 Wed, 2026-04-07 Tue.
+    assert a["by_weekday"]["Mon"]["planned"] == 1
+    assert a["by_weekday"]["Mon"]["completed"] == 1
+    assert a["by_weekday"]["Wed"]["planned"] == 1
+    assert a["by_weekday"]["Wed"]["completed"] == 0
+    assert a["by_weekday"]["Tue"]["planned"] == 1
+
+
+def test_midpoint_review_brief_threshold_provenance_marks_stale(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from datetime import date
+
+    _seed_midpoint_repo(
+        tmp_path,
+        profile={
+            "athlete": {"weight_kg": 75},
+            "thresholds": {
+                "ftp_w": {"value": 280, "set_at": "2026-04-15", "source": "field_test"},
+                "lthr_bpm": {"value": 168, "set_at": "2026-04-01", "source": "race_result"},
+                "run_threshold_pace": {
+                    "value": "4:42/km",
+                    "set_at": "2025-12-01",
+                    "source": "race_result",
+                },
+            },
+        },
+    )
+    _patch_roots(monkeypatch, tmp_path)
+
+    brief = briefs.midpoint_review_brief(
+        week_id="2026-W16", today=date(2026, 4, 19)
+    )
+    th = brief["thresholds"]
+    assert th["ftp_w"]["is_stale"] is False
+    assert th["ftp_w"]["age_days"] == 4
+    assert th["run_threshold_pace"]["is_stale"] is True
+    assert "stale_threshold:run_threshold_pace" in brief["signals"]
+
+
+def test_midpoint_review_brief_signals_compute_deterministic_flags(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from datetime import date
+
+    _seed_midpoint_repo(tmp_path)
+    _patch_roots(monkeypatch, tmp_path)
+
+    from tempo.db import connect, init_schema
+
+    conn = connect()
+    try:
+        init_schema(conn)
+        # Two consecutive weeks with low completion (50% each) — triggers
+        # adherence_below_70_consec_2 and tss_under_target.
+        for wid, when in [("2026-W14", "2026-03-30"), ("2026-W15", "2026-04-06")]:
+            for i in range(4):
+                sid = f"{wid}-s{i}"
+                conn.execute(
+                    "INSERT INTO sessions_planned (id, plan_id, week_id, date, sport, target_tss) "
+                    "VALUES (?, ?, ?, ?, ?, ?)",
+                    (sid, "2026-mid-test", wid, when, "ride", 100.0),
+                )
+                completed = 1 if i < 2 else 0
+                conn.execute(
+                    "INSERT INTO adherence (planned_session_id, completed, reason) VALUES (?, ?, ?)",
+                    (sid, completed, "completed" if completed else "skipped"),
+                )
+        # Latest CTL well below target.
+        conn.execute(
+            "INSERT INTO load_daily (date, ctl, atl, tsb) VALUES (?, ?, ?, ?)",
+            ("2026-04-19", 20.0, 25.0, -5.0),
+        )
+    finally:
+        conn.close()
+
+    brief = briefs.midpoint_review_brief(
+        week_id="2026-W16", today=date(2026, 4, 19)
+    )
+    sigs = brief["signals"]
+    # Phase target_mid 240 → target_ss_ctl ≈ 34.3. Actual CTL 20 → -42% delta.
+    assert "ctl_below_target_pct_15" in sigs
+    assert "phase_completion_below_70" in sigs
+    assert "adherence_below_70_consec_2" in sigs
+    assert "tss_under_target" in sigs
+
+
+def test_midpoint_review_brief_default_week_is_today(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from datetime import date
+
+    _seed_midpoint_repo(tmp_path)
+    _patch_roots(monkeypatch, tmp_path)
+
+    today = date(2026, 4, 19)  # 2026-W16
+    brief = briefs.midpoint_review_brief(today=today)
+    assert brief["week_id"] == "2026-W16"
+
+
+def test_midpoint_review_brief_week_outside_phase_raises(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from datetime import date
+
+    _seed_midpoint_repo(tmp_path)
+    _patch_roots(monkeypatch, tmp_path)
+
+    with pytest.raises(briefs.NoActivePlanError, match="not contained in any phase"):
+        briefs.midpoint_review_brief(week_id="2026-W05", today=date(2026, 2, 1))
+
+
+def test_midpoint_review_brief_idempotency_signal(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The same week always resolves to the same review_path; existing file flagged."""
+    from datetime import date
+
+    _seed_midpoint_repo(tmp_path)
+    _patch_roots(monkeypatch, tmp_path)
+
+    review_dir = tmp_path / "plans" / "2026-mid-test" / "reviews"
+    review_dir.mkdir(parents=True)
+    (review_dir / "midpoint-2026-W16.md").write_text("# prior run\n", encoding="utf-8")
+
+    brief = briefs.midpoint_review_brief(
+        week_id="2026-W16", today=date(2026, 4, 19)
+    )
+    assert brief["review_already_exists"] is True
+    assert brief["review_path"] == "plans/2026-mid-test/reviews/midpoint-2026-W16.md"
+
+
+def test_midpoint_review_brief_surfaces_calibration_debt(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from datetime import date
+
+    _seed_midpoint_repo(
+        tmp_path,
+        profile={
+            "athlete": {"weight_kg": 75},
+            "thresholds": {
+                # Blank FTP → "not set" debt; stale run pace → freshness debt.
+                "ftp_w": None,
+                "lthr_bpm": {"value": 168, "set_at": "2026-04-01", "source": "field_test"},
+                "run_threshold_pace": {
+                    "value": "4:42/km",
+                    "set_at": "2025-08-01",
+                    "source": "race_result",
+                },
+            },
+        },
+    )
+    _patch_roots(monkeypatch, tmp_path)
+
+    brief = briefs.midpoint_review_brief(
+        week_id="2026-W16", today=date(2026, 4, 19)
+    )
+    fields = {d["field"] for d in brief["calibration_debt"]}
+    assert "athlete.profile.thresholds.ftp_w" in fields
+    assert "athlete.profile.thresholds.run_threshold_pace.set_at" in fields

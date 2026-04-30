@@ -500,6 +500,466 @@ def review_week_brief(
     }
 
 
+_WEEKDAYS: tuple[str, ...] = ("Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun")
+
+
+def _phase_week_ids(phase: dict[str, Any], *, up_to_week: str) -> list[str]:
+    """Every ISO week id in the phase from start through ``up_to_week`` (inclusive).
+
+    Truncates at ``up_to_week`` so a midpoint review only aggregates weeks
+    that have actually elapsed within the phase. Returns an empty list if
+    ``up_to_week`` precedes phase start.
+    """
+    start_w = phase.get("start_week")
+    weeks = phase.get("weeks")
+    if not start_w or not weeks:
+        return []
+    try:
+        target_idx = (plans.week_start(up_to_week) - plans.week_start(start_w)).days // 7
+    except (ValueError, AttributeError):
+        return []
+    if target_idx < 0:
+        return []
+    last = min(int(weeks) - 1, target_idx)
+    return [plans.shift_week(start_w, weeks=i) for i in range(last + 1)]
+
+
+def _phase_adherence_rollup(
+    conn: sqlite3.Connection, *, week_ids: list[str]
+) -> dict[str, Any]:
+    """Aggregate per-week adherence into phase-level totals + by-sport + by-weekday."""
+    weekly: list[dict[str, Any]] = []
+    by_sport: dict[str, dict[str, float]] = {}
+    by_weekday: dict[str, dict[str, float]] = {
+        d: {"planned": 0, "completed": 0} for d in _WEEKDAYS
+    }
+    planned_total = 0
+    completed_total = 0
+    skipped_total = 0
+    moved_total = 0
+    planned_tss_total = 0.0
+    actual_tss_total = 0.0
+
+    for wid in week_ids:
+        rep = queries.get_adherence(conn, week_id=wid)
+        weekly.append(
+            {
+                "week_id": wid,
+                "planned_count": rep.planned_count,
+                "completed_count": rep.completed_count,
+                "completion_pct": rep.completion_pct,
+                "total_planned_tss": rep.total_planned_tss,
+                "total_actual_tss": rep.total_actual_tss,
+            }
+        )
+        planned_total += rep.planned_count
+        completed_total += rep.completed_count
+        skipped_total += rep.skipped_count
+        moved_total += rep.moved_count
+        planned_tss_total += rep.total_planned_tss
+        actual_tss_total += rep.total_actual_tss
+
+        for item in rep.items:
+            sport = item.sport or "unknown"
+            bucket = by_sport.setdefault(
+                sport,
+                {"planned": 0, "completed": 0, "planned_tss": 0.0, "actual_tss": 0.0},
+            )
+            bucket["planned"] += 1
+            if item.completed:
+                bucket["completed"] += 1
+            if item.date:
+                try:
+                    weekday = _WEEKDAYS[date.fromisoformat(item.date).weekday()]
+                    by_weekday[weekday]["planned"] += 1
+                    if item.completed:
+                        by_weekday[weekday]["completed"] += 1
+                except (ValueError, KeyError):
+                    pass
+
+        deltas = queries.compare_plan_to_actual(conn, week_id=wid)
+        for d in deltas:
+            sport = d.sport or "unknown"
+            bucket = by_sport.setdefault(
+                sport,
+                {"planned": 0, "completed": 0, "planned_tss": 0.0, "actual_tss": 0.0},
+            )
+            bucket["planned_tss"] += float(d.planned_tss or 0.0)
+            bucket["actual_tss"] += float(d.actual_tss or 0.0)
+
+    by_weekday_out: dict[str, dict[str, Any]] = {}
+    for d in _WEEKDAYS:
+        p = by_weekday[d]["planned"]
+        c = by_weekday[d]["completed"]
+        by_weekday_out[d] = {
+            "planned": p,
+            "completed": c,
+            "completion_pct": round(100.0 * c / p, 1) if p else None,
+        }
+
+    by_sport_out: dict[str, dict[str, Any]] = {}
+    for sport, vals in by_sport.items():
+        p = vals["planned"]
+        c = vals["completed"]
+        by_sport_out[sport] = {
+            "planned": int(p),
+            "completed": int(c),
+            "completion_pct": round(100.0 * c / p, 1) if p else None,
+            "planned_tss": round(vals["planned_tss"], 1),
+            "actual_tss": round(vals["actual_tss"], 1),
+        }
+
+    completion_pct = round(100.0 * completed_total / planned_total, 1) if planned_total else 0.0
+    tss_ratio = (
+        round(actual_tss_total / planned_tss_total, 3)
+        if planned_tss_total
+        else None
+    )
+    return {
+        "weeks_summarized": [w["week_id"] for w in weekly],
+        "weeks_count": len(weekly),
+        "planned_count": planned_total,
+        "completed_count": completed_total,
+        "skipped_count": skipped_total,
+        "moved_count": moved_total,
+        "completion_pct": completion_pct,
+        "total_planned_tss": round(planned_tss_total, 1),
+        "total_actual_tss": round(actual_tss_total, 1),
+        "tss_ratio": tss_ratio,
+        "weekly": weekly,
+        "by_sport": by_sport_out,
+        "by_weekday": by_weekday_out,
+    }
+
+
+def _phase_wellness_rollup(
+    conn: sqlite3.Connection, *, start_date: str, end_date: str
+) -> dict[str, Any]:
+    """Phase-window wellness summary with first-vs-second half HRV trend."""
+    rows = queries.get_wellness_range(conn, start_date=start_date, end_date=end_date)
+    if not rows:
+        return {"samples_days": 0}
+
+    def _mean(vals: list[float]) -> float | None:
+        cleaned = [v for v in vals if v is not None]
+        return round(sum(cleaned) / len(cleaned), 2) if cleaned else None
+
+    midpoint = len(rows) // 2
+    first_half = rows[:midpoint] if midpoint else rows
+    second_half = rows[midpoint:] if midpoint else []
+
+    hrv_first = _mean([r.hrv for r in first_half if r.hrv is not None])
+    hrv_second = _mean([r.hrv for r in second_half if r.hrv is not None]) if second_half else None
+    hrv_trend = (
+        round(hrv_second - hrv_first, 2)
+        if hrv_first is not None and hrv_second is not None
+        else None
+    )
+
+    low_readiness = sum(
+        1 for r in rows if r.readiness is not None and r.readiness < 5
+    )
+
+    return {
+        "samples_days": len(rows),
+        "hrv_first_half_mean": hrv_first,
+        "hrv_second_half_mean": hrv_second,
+        "hrv_trend_delta": hrv_trend,
+        "sleep_mean": _mean([r.sleep_h for r in rows if r.sleep_h is not None]),
+        "rhr_mean": _mean([float(r.rhr) for r in rows if r.rhr is not None]),
+        "low_readiness_days": low_readiness,
+        "low_readiness_threshold": 5,
+    }
+
+
+def _threshold_provenance_block(
+    profile: dict[str, Any], *, today: date
+) -> dict[str, dict[str, Any]]:
+    """Per-zone {value, set_at, source, age_days, is_stale} for the brief."""
+    from . import zones
+
+    thresholds = profile.get("thresholds") or {}
+    out: dict[str, dict[str, Any]] = {}
+    for key in zones.STALE_WINDOWS:
+        t = zones.parse_threshold(thresholds.get(key))
+        out[key] = {
+            "value": t.value,
+            "set_at": t.set_at.isoformat() if t.set_at else None,
+            "source": t.source,
+            "source_ref": t.source_ref,
+            "age_days": t.age_days(today),
+            "freshness_window_days": zones.STALE_WINDOWS[key],
+            "is_set": t.is_set,
+            "is_stale": zones.is_stale(key, t, today=today),
+        }
+    return out
+
+
+def _recent_decisions_for_plan(
+    conn: sqlite3.Connection, *, plan_id: str, limit: int = 8
+) -> list[dict[str, Any]]:
+    """Last N decisions whose scope mentions this plan (week-scoped or plan-scoped)."""
+    rows = conn.execute(
+        "SELECT timestamp, scope, kind, rationale FROM decisions "
+        "WHERE scope LIKE ? OR scope LIKE 'week:%' "
+        "ORDER BY timestamp DESC LIMIT ?",
+        (f"plan:{plan_id}%", limit),
+    ).fetchall()
+    return [
+        {
+            "timestamp": r["timestamp"],
+            "scope": r["scope"],
+            "kind": r["kind"],
+            "rationale": r["rationale"],
+        }
+        for r in rows
+    ]
+
+
+def _midpoint_signals(
+    *,
+    target_vs_actual: dict[str, Any],
+    adherence: dict[str, Any],
+    wellness: dict[str, Any],
+    threshold_provenance: dict[str, dict[str, Any]],
+) -> list[str]:
+    """Deterministic flags the skill prompt synthesizes hypotheses from.
+
+    Empirically computed (no LLM) so the brief is reproducible and the
+    skill's reasoning has a stable evidence base. Names are stable
+    identifiers consumers can grep.
+    """
+    out: list[str] = []
+
+    ctl = target_vs_actual.get("ctl_overall") or {}
+    delta_pct = ctl.get("delta_pct")
+    if isinstance(delta_pct, (int, float)):
+        if delta_pct < -15:
+            out.append("ctl_below_target_pct_15")
+        elif delta_pct < -5:
+            out.append("ctl_below_target_pct_5")
+        elif delta_pct > 15:
+            out.append("ctl_above_target_pct_15")
+
+    if adherence.get("planned_count", 0) > 0:
+        if (adherence.get("completion_pct") or 0) < 70:
+            out.append("phase_completion_below_70")
+        weekly = adherence.get("weekly") or []
+        consec = 0
+        for w in weekly:
+            if (w.get("completion_pct") or 100) < 70:
+                consec += 1
+                if consec >= 2:
+                    out.append("adherence_below_70_consec_2")
+                    break
+            else:
+                consec = 0
+        ratio = adherence.get("tss_ratio")
+        if isinstance(ratio, (int, float)):
+            if ratio < 0.85:
+                out.append("tss_under_target")
+            elif ratio > 1.15:
+                out.append("tss_over_target")
+
+    hrv_trend = wellness.get("hrv_trend_delta")
+    if isinstance(hrv_trend, (int, float)) and hrv_trend < -2:
+        out.append("hrv_declining_phase")
+
+    samples = wellness.get("samples_days") or 0
+    low_days = wellness.get("low_readiness_days") or 0
+    if samples > 0 and low_days / samples > 0.20:
+        out.append("low_readiness_pattern")
+
+    for key, block in threshold_provenance.items():
+        if block.get("is_stale"):
+            out.append(f"stale_threshold:{key}")
+
+    return out
+
+
+def midpoint_review_brief(
+    week_id: str | None = None,
+    *,
+    plan_id: str | None = None,
+    today: date | None = None,
+) -> dict[str, Any]:
+    """Assemble the midpoint-review brief — "am I on track?" mid-phase.
+
+    Aggregates adherence, wellness, load, threshold provenance, and recent
+    decisions across the *current phase up to and including* ``week_id``.
+    Defaults: ``week_id`` → ISO week of ``today``; ``today`` → ``date.today()``.
+
+    Raises:
+        NoActivePlanError: no plan.yaml found.
+        plans.MultiplePlansError: ambiguous auto-detection.
+    """
+    today = today or date.today()
+    if week_id is None:
+        week_id = plans.week_id_for(today)
+
+    if plan_id is not None:
+        plan_doc = plans.read_plan_yaml(plan_id)
+        if plan_doc is None:
+            raise NoActivePlanError(f"plan {plan_id!r} not found under plans/")
+        resolved_plan_id = plan_id
+    else:
+        found = plans.find_single_plan()
+        if found is None:
+            raise NoActivePlanError(
+                "no plan found under plans/ — run /bootstrap-plan first"
+            )
+        resolved_plan_id, plan_doc = found
+
+    phase = plans.phase_for_week(plan_doc, week_id)
+    if phase is None:
+        raise NoActivePlanError(
+            f"week {week_id} is not contained in any phase of plan {resolved_plan_id} — "
+            "verify plan.yaml phases or pass --week explicitly"
+        )
+
+    week_in_phase = plans.week_index_in_phase(phase, week_id) or 0
+    total_phase_weeks = int(phase.get("weeks") or 0)
+    weeks_remaining = max(0, total_phase_weeks - week_in_phase)
+    tss_target = _phase_tss_target(phase)
+    target_mid = tss_target[2] if tss_target else None
+    target_ss_ctl = round(target_mid / 7.0, 1) if target_mid is not None else None
+
+    elapsed_week_ids = _phase_week_ids(phase, up_to_week=week_id)
+    if elapsed_week_ids:
+        phase_start_iso = plans.week_start(elapsed_week_ids[0]).isoformat()
+        phase_end_iso = plans.week_end(elapsed_week_ids[-1]).isoformat()
+    else:
+        phase_start_iso = plans.week_start(week_id).isoformat()
+        phase_end_iso = plans.week_end(week_id).isoformat()
+
+    adherence: dict[str, Any] = {"weeks_count": 0, "planned_count": 0}
+    wellness: dict[str, Any] = {"samples_days": 0}
+    load_traj: dict[str, Any] = {"daily": [], "start_ctl": None}
+    decisions: list[dict[str, Any]] = []
+    latest_load: dict[str, Any] | None = None
+    db_error: str | None = None
+
+    try:
+        conn = connect()
+    except Exception as e:  # pragma: no cover — defensive
+        db_error = f"could not open coach.db: {e}"
+        conn = None
+
+    if conn is not None:
+        try:
+            init_schema(conn)
+            adherence = _phase_adherence_rollup(conn, week_ids=elapsed_week_ids)
+            wellness = _phase_wellness_rollup(
+                conn, start_date=phase_start_iso, end_date=phase_end_iso
+            )
+            daily_load = _load_curve_rows(conn, start=phase_start_iso, end=phase_end_iso)
+            load_traj = _load_trajectory(daily_load)
+            if daily_load:
+                latest_load = daily_load[-1]
+            decisions = _recent_decisions_for_plan(conn, plan_id=resolved_plan_id)
+        finally:
+            conn.close()
+
+    actual_ctl = latest_load.get("ctl") if latest_load else None
+    delta_ctl = (
+        round(actual_ctl - target_ss_ctl, 1)
+        if actual_ctl is not None and target_ss_ctl is not None
+        else None
+    )
+    delta_pct = (
+        round(100.0 * delta_ctl / target_ss_ctl, 1)
+        if delta_ctl is not None and target_ss_ctl
+        else None
+    )
+
+    target_vs_actual: dict[str, Any] = {
+        "ctl_overall": {
+            "target": target_ss_ctl,
+            "actual": actual_ctl,
+            "delta": delta_ctl,
+            "delta_pct": delta_pct,
+        },
+        "tsb_latest": {
+            "actual": latest_load.get("tsb") if latest_load else None,
+        },
+        "ctl_bike": {"actual": latest_load.get("ctl_bike") if latest_load else None},
+        "ctl_run": {"actual": latest_load.get("ctl_run") if latest_load else None},
+        "ctl_swim": {"actual": latest_load.get("ctl_swim") if latest_load else None},
+    }
+
+    profile = athlete.load_profile()
+    threshold_provenance = _threshold_provenance_block(profile, today=today)
+
+    from .calibration import calibration_debt as _calibration_debt
+
+    debt_items = _calibration_debt(resolved_plan_id, today=today)
+    debt_payload = [
+        {
+            "field": d.field,
+            "severity": d.severity,
+            "message": d.message,
+            "suggested_fix": d.suggested_fix,
+            "blocks": d.blocks,
+        }
+        for d in debt_items
+    ]
+
+    review_path = (
+        plans.plan_dir(resolved_plan_id)
+        / "reviews"
+        / f"midpoint-{week_id}.md"
+    )
+    try:
+        review_path_str = str(review_path.relative_to(plans.repo_root()))
+    except ValueError:
+        review_path_str = str(review_path)
+
+    signals = _midpoint_signals(
+        target_vs_actual=target_vs_actual,
+        adherence=adherence,
+        wellness=wellness,
+        threshold_provenance=threshold_provenance,
+    )
+
+    return {
+        "as_of": today.isoformat(),
+        "week_id": week_id,
+        "today": today.isoformat(),
+        "plan": {
+            "plan_id": resolved_plan_id,
+            "phase_id": phase.get("id"),
+            "phase_goal": phase.get("goal"),
+            "phase": phase,
+            "week_in_phase": week_in_phase,
+            "weeks_remaining_in_phase": weeks_remaining,
+            "total_phase_weeks": total_phase_weeks,
+            "weekly_tss_target_mid": target_mid,
+            "sport_focus": phase.get("sport_focus"),
+            "intensity_distribution": phase.get("intensity_distribution"),
+        },
+        "phase_window": {
+            "start_week_id": elapsed_week_ids[0] if elapsed_week_ids else None,
+            "end_week_id": elapsed_week_ids[-1] if elapsed_week_ids else None,
+            "start_date": phase_start_iso,
+            "end_date": phase_end_iso,
+            "weeks_elapsed": len(elapsed_week_ids),
+        },
+        "target_vs_actual": target_vs_actual,
+        "adherence_phase": adherence,
+        "wellness_phase": wellness,
+        "load_trajectory": load_traj,
+        "thresholds": threshold_provenance,
+        "calibration_debt": debt_payload,
+        "recent_decisions": decisions,
+        "active_injuries": athlete.active_injury_flags(),
+        "hard_constraints": athlete.hard_constraints(),
+        "signals": signals,
+        "review_path": review_path_str,
+        "review_already_exists": review_path.is_file(),
+        "db_error": db_error,
+    }
+
+
 class IngestSourceError(ValueError):
     """Raised when an ingest source can't be fetched or parsed."""
 
