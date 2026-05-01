@@ -439,9 +439,55 @@ phase_library:
       base_aerobic_bike, base_aerobic_swim, base_aerobic_run,
       base_aerobic_multisport, base_durability_multisport,
       peak_bike, peak_run, peak_swim,
+      streak_block,
     ]
     valid_successors: [null]
     preconditions: []
+
+  # ---- STREAK & ADVENTURE BLOCKS ------------------------------------------
+  # Streak goals = daily-frequency-as-the-constraint (e.g. 30 / 100 days
+  # consecutive). The block is non-periodised: it holds low-to-moderate Z2
+  # so the daily count is achievable without injury. R-5 / R-7 still gate
+  # entry — a streak does not override an active impact-injury flag.
+  #
+  # Adventure goals = anchor on an event date but it isn't a "race" — long
+  # hike (rim-to-rim), self-supported audax, big ride. The composer chains
+  # base-style volume/durability (`adventure_prep_block`) into a final
+  # event-specific simulation block (`adventure_simulation_block`) that
+  # rehearses terrain + nutrition + gear. No taper.
+
+  streak_block:
+    sport_focus: { run: 0.4, bike: 0.4, strength: 0.2 }
+    character: "consistency-anchored daily session count; low-to-moderate Z2; injury-resistance dominates"
+    duration_range: [4, 16]
+    intensity_distribution: { z1_z2: 90, z3: 8, z4_plus: 2 }
+    weekly_tss_per_hour: [35, 55]
+    key_sessions: [easy_aerobic_run, easy_aerobic_ride, hill_strides, strength_foundation, technique_swim]
+    valid_predecessors: [null, streak_block, base_aerobic_run, base_aerobic_bike, base_aerobic_multisport]
+    valid_successors: [null, streak_block, deload_test]
+    preconditions: [no_active_run_injury]
+
+  adventure_prep_block:
+    sport_focus: { bike: 0.5, run: 0.25, strength: 0.15, swim: 0.10 }
+    character: "volume + durability anchor for a non-race event; terrain mileage; held below threshold"
+    duration_range: [3, 12]
+    intensity_distribution: { z1_z2: 85, z3: 12, z4_plus: 3 }
+    weekly_tss_per_hour: [55, 75]
+    key_sessions: [long_ride_z2, long_run_z2, hill_strides, tempo_bike_block, strength_foundation]
+    valid_predecessors: [null, base_aerobic_bike, base_aerobic_run, base_aerobic_multisport, base_durability_bike, base_durability_run, base_durability_multisport]
+    valid_successors: [adventure_simulation_block, deload_test]
+    preconditions: [no_active_run_injury]
+
+  adventure_simulation_block:
+    sport_focus: { bike: 0.55, run: 0.25, strength: 0.10, swim: 0.10 }
+    character: "final 3wk: event-specific terrain + full nutrition/gear rehearsal; no taper"
+    duration_range: [2, 4]
+    intensity_distribution: { z1_z2: 85, z3: 12, z4_plus: 3 }
+    weekly_tss_per_hour: [55, 80]
+    key_sessions: [long_ride_z2, gravel_fondo_long_tempo, climbing_repeats, long_run_z2, race_day_fueling_rehearsal]
+    valid_predecessors: [adventure_prep_block]
+    valid_successors: [null]
+    preconditions: [no_active_run_injury]
 
 
 # ===========================================================================
@@ -613,3 +659,37 @@ templates:
       - { phase: base_aerobic_multisport,    weeks: 4 }
       - { phase: base_durability_multisport, weeks: 3 }
       - { phase: deload_test,                weeks: 1 }
+
+  # Streak templates — count-based, not periodised. Single streak_block,
+  # composer stretches its weeks to fit runway. 30-day ~= 4-5wk; 100-day
+  # ~= 14-15wk. The block's duration_range upper bound (16wk) caps how far
+  # we'll auto-extend a single streak before recommending a re-bootstrap.
+  streak_30day_block:
+    distance: streak_30day
+    sport_focus: { run: 0.4, bike: 0.4, strength: 0.2 }
+    chain:
+      - { phase: streak_block, weeks: 5 }
+
+  streak_100day_block:
+    distance: streak_100day
+    sport_focus: { run: 0.4, bike: 0.4, strength: 0.2 }
+    chain:
+      - { phase: streak_block, weeks: 15 }
+
+  # Adventure templates — anchored on event date. Final 3wk are the
+  # simulation block (terrain + nutrition rehearsal). The prep block
+  # absorbs the runway. Hike vs ride sport_focus differs; both end on
+  # adventure_simulation_block with no taper.
+  adventure_hike_4wk:
+    distance: adventure_hike
+    sport_focus: { run: 0.55, bike: 0.30, strength: 0.15 }
+    chain:
+      - { phase: adventure_prep_block,       weeks: 1 }
+      - { phase: adventure_simulation_block, weeks: 3 }
+
+  adventure_ride_8wk:
+    distance: adventure_ride
+    sport_focus: { bike: 0.75, strength: 0.15, run: 0.10 }
+    chain:
+      - { phase: adventure_prep_block,       weeks: 5 }
+      - { phase: adventure_simulation_block, weeks: 3 }
