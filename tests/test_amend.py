@@ -407,3 +407,27 @@ def test_switch_target_unknown_race_raises(isolated_root: Path, db):
     _seed_athlete(isolated_root, races=[{"id": "demo", "date": "2026-12-12"}])
     with pytest.raises(AmendError, match="not found"):
         switch_target("demo", new_race_id="ghost-race", reason="x", dry_run=True)
+
+
+def test_switch_target_refuses_cancelled_race(isolated_root: Path, db):
+    """tempo-wk7: re-anchoring onto a cancelled race is a hard refusal."""
+    from tempo.amend import AmendError, switch_target
+
+    _seed_plan(isolated_root, target_date="2026-12-12")
+    _seed_athlete(
+        isolated_root,
+        races=[
+            {"id": "demo", "type": "marathon", "date": "2026-12-12", "priority": "A"},
+            {
+                "id": "dead-race",
+                "type": "marathon",
+                "name": "Cancelled Marathon",
+                "date": "2026-11-01",
+                "priority": "A",
+                "status": "cancelled",
+                "cancelled_reason": "course closure",
+            },
+        ],
+    )
+    with pytest.raises(AmendError, match="cancelled"):
+        switch_target("demo", new_race_id="dead-race", reason="x", dry_run=True)

@@ -371,6 +371,12 @@ def switch_target(
             f"known ids: {_athlete.all_goal_ids(root=root)}"
         )
     new_race = new_match.data
+    if new_race.get("status") == "cancelled":
+        reason = new_race.get("cancelled_reason") or "(no reason recorded)"
+        raise AmendError(
+            f"race {new_race_id!r} is cancelled ({reason}); cannot re-anchor onto "
+            "it. Pick a confirmed or tentative race."
+        )
     new_distance = new_race.get("type") or new_race.get("distance")
     new_target = _coerce_date(new_race.get("date"), what=f"race {new_race_id!r} date")
 
