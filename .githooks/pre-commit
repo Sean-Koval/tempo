@@ -23,6 +23,22 @@ if command -v bd >/dev/null 2>&1; then
     if git rev-parse --git-dir >/dev/null 2>&1; then
         if [ -d ".beads" ] || [ -f ".beads/beads.db" ]; then
             bd sync --flush-only >/dev/null 2>&1 || true
+
+            # Worktrees: beads.db lives in the main worktree's .beads/, so
+            # `bd sync --flush-only` writes the canonical jsonl there, not
+            # this worktree's tracked snapshot. Mirror canonical → worktree
+            # before staging; otherwise the merge-back conflicts on every
+            # ticket touched in another worktree since the branch forked.
+            git_dir_abs="$(cd "$(git rev-parse --git-dir)" && pwd)"
+            git_common_abs="$(cd "$(git rev-parse --git-common-dir)" && pwd)"
+            if [ "$git_dir_abs" != "$git_common_abs" ]; then
+                canonical_jsonl="$(dirname "$git_common_abs")/.beads/issues.jsonl"
+                if [ -f "$canonical_jsonl" ] && [ -f ".beads/issues.jsonl" ] \
+                   && ! cmp -s "$canonical_jsonl" ".beads/issues.jsonl"; then
+                    cp "$canonical_jsonl" ".beads/issues.jsonl"
+                fi
+            fi
+
             if [ -f ".beads/issues.jsonl" ] && ! git diff --cached --quiet -- .beads/issues.jsonl 2>/dev/null; then
                 : # already staged or about to be — let the user notice in their commit
             elif [ -f ".beads/issues.jsonl" ] && ! git diff --quiet -- .beads/issues.jsonl 2>/dev/null; then
