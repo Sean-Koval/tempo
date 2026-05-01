@@ -19,7 +19,7 @@ Current framework (cycling-led, run paused for left-tibia BSI recovery — see `
 - **Hard-day pattern:** Tue (hard bike) + Thu (hard bike). No back-to-back hard cycling.
 - **Strength touches/week:** 4 (Mon Day-A lower, Wed Day-B upper, Fri Day-C hip/cycling-power, Tue evening Day-D mini upper).
 - **Sport priority right now:** Bike (primary) → Strength (secondary, supporting cycling + tibia rehab) → Run (paused, BSI). Swim deferred until pool access + base built.
-- **Sleep window:** _(fill in — drives next-day intensity gating)_
+- **Sleep window:** 12:30 AM → 8:00 AM (~7.5 hr target). Readiness < 6 → cut next hard session per R-1/R-3.
 - **Daily readiness gate:** if HRV trending down 3+ days **and** TSB < −20, cut next hard session by default (see `decision-rules.md` R-1, R-3).
 
 ### Weekly template (current block)
