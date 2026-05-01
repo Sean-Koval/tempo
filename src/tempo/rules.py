@@ -34,7 +34,15 @@ from pathlib import Path
 from typing import Any, Literal
 
 Severity = Literal["HARD", "SOFT", "WATCH"]
-Topic = Literal["wellness", "injury", "load", "session_placement", "progression", "fueling"]
+Topic = Literal[
+    "wellness",
+    "injury",
+    "load",
+    "session_placement",
+    "progression",
+    "fueling",
+    "subprogram",
+]
 
 
 @dataclass
@@ -110,6 +118,10 @@ class RulesContext:
     current_phase: str | None = None
     is_taper_or_peak: bool = False
     race_in_week: RaceInWeek | None = None  # B/C race week → R-19 fires
+    # R-20 inputs. ``active_fragments`` is list[tempo.fragments.PlanFragment];
+    # typed loose to keep rules.py importable without a hard dep on fragments.
+    active_fragments: tuple[Any, ...] = ()
+    phase_tss_upper: float | None = None  # phase's upper TSS-target band, for R-20
 
 
 @dataclass
@@ -595,6 +607,66 @@ def r19_race_priority_taper(ctx: RulesContext) -> list[Violation]:
         )
 
     return out
+
+
+@register_rule(
+    rule_id="R-20",
+    severity="SOFT",
+    topic="subprogram",
+    name="Active sub-program capacity",
+)
+def r20_active_subprogram_capacity(ctx: RulesContext) -> list[Violation]:
+    """Active goal-research fragments shouldn't push weekly TSS > +15% over phase upper.
+
+    Reads ``ctx.active_fragments`` (list of :class:`tempo.fragments.PlanFragment`)
+    and ``ctx.phase_tss_upper`` (the upper end of the phase's
+    ``weekly_tss_target`` band). The drafted week's session TSS plus the
+    fragments' estimated weekly TSS contribution must stay within
+    ``phase_tss_upper * 1.15``.
+
+    Why SOFT: a one-week intentional spike (race-sim landing in an active
+    strength block) is a valid coaching choice. The override path captures
+    that. Persistent overage past two weeks should trigger fragment
+    re-evaluation — that's a coaching prompt, not a HARD reject.
+    """
+    if not ctx.active_fragments or ctx.phase_tss_upper is None:
+        return []
+
+    week_tss = sum((s.target_tss or 0.0) for s in ctx.week_draft.sessions)
+    fragment_tss = 0.0
+    contributions: list[str] = []
+    for frag in ctx.active_fragments:
+        # Duck-type: PlanFragment has estimated_weekly_tss(); kept loose so
+        # rules.py doesn't import fragments.py at module load.
+        contrib = float(getattr(frag, "estimated_weekly_tss", lambda: 0.0)())
+        if contrib > 0:
+            fragment_tss += contrib
+            contributions.append(
+                f"{getattr(frag, 'fragment_id', '?')}: {contrib:.0f}"
+            )
+
+    projected = week_tss + fragment_tss
+    cap = float(ctx.phase_tss_upper) * 1.15
+    if projected <= cap:
+        return []
+
+    overage_pct = (projected / float(ctx.phase_tss_upper) - 1.0) * 100.0
+    return [
+        Violation(
+            rule_id="R-20",
+            severity="SOFT",
+            message=(
+                f"Active sub-program(s) push projected TSS to {projected:.0f} "
+                f"(week sessions {week_tss:.0f} + fragments {fragment_tss:.0f}), "
+                f"{overage_pct:.0f}% over phase upper {ctx.phase_tss_upper:.0f}; "
+                f"15% cap exceeded. Fragment contributions: "
+                f"[{', '.join(contributions) or 'none'}]. "
+                "Drop a fragment session this week or accept overage in changelog."
+            ),
+            session_id=None,
+            override_path=_SOFT_OVERRIDE,
+        )
+    ]
 
 
 # --- Helpers ---------------------------------------------------------------

@@ -116,6 +116,17 @@ Override is allowed (e.g., trial race-pace through a B-race), but the override g
 
 ---
 
+## Sub-program capacity
+
+### R-20 Active sub-program capacity (SOFT)
+Active goal-research fragments (under `plans/<plan-id>/fragments/`) should not push a week's projected TSS more than 15% beyond the phase's upper TSS target. The macro plan stays the anchor; a fragment that doesn't fit either drops a session this week or surfaces an explicit decision to Sean ("strength block is squeezing the long-ride budget — keep both? swap?").
+
+This rule fires per week against the active fragments returned by `tempo.fragments.load_active_fragments`. The 15% overage band gives short-term wiggle room (one mesocycle of intentional overload) without making it the default. Persistent overage past two weeks should trigger a fragment re-evaluation.
+
+Override path: same as any SOFT rule — changelog rationale + `log_decision` with `kind=adjust`. Use the override when the overage is a one-week intentional spike (e.g., a race-sim weekend that lands inside an active strength fragment).
+
+---
+
 ## Override protocol
 
 Any SOFT rule override requires:
