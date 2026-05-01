@@ -350,6 +350,75 @@ def decoupling_cmd(
         console.print("[dim]Nothing to do — all eligible activities have decoupling.[/dim]")
 
 
+@app.command("init-profile")
+def init_profile_cmd(
+    force: bool = typer.Option(
+        False,
+        "--force",
+        help="Overwrite existing non-stub values in athlete/profile.yaml.",
+    ),
+    no_prompt: bool = typer.Option(
+        False,
+        "--no-prompt",
+        help="Skip the interactive prompts for fields intervals doesn't know.",
+    ),
+) -> None:
+    """Auto-seed athlete/profile.yaml from intervals.icu, then prompt for gaps.
+
+    Pulls athlete profile (name, dob, weight, FTP, LTHR, HR, zones) and
+    per-sport thresholds (bike FTP, run threshold pace, swim CSS pace if
+    set). Each populated threshold gets provenance (set_at + source +
+    source_ref). Existing non-stub values are left alone unless --force.
+    Re-running with no upstream changes is a byte-identical no-op.
+    """
+    from .profile_init import init_profile, render_summary_rows
+
+    def _prompt(label: str) -> str:
+        return typer.prompt(label, default="", show_default=False)
+
+    try:
+        result = init_profile(
+            force=force,
+            prompt_gaps=not no_prompt,
+            prompt_fn=None if no_prompt else _prompt,
+        )
+    except Exception as e:
+        console.print(f"[red]init-profile failed:[/red] {e}")
+        raise typer.Exit(code=1) from e
+
+    if result.creds_missing:
+        console.print(f"[red]{result.creds_message}[/red]")
+        raise typer.Exit(code=2)
+
+    rows = render_summary_rows(result)
+    if not rows:
+        console.print("[dim]No changes — profile already populated.[/dim]")
+        return
+
+    table = Table(title=f"init-profile — {result.profile_path}", show_header=True, header_style="bold")
+    for col in ("Status", "Field", "Value", "Source"):
+        table.add_column(col)
+    badge = {
+        "set": "[green]set[/green]",
+        "force": "[yellow]overwrote[/yellow]",
+        "manual": "[cyan]manual[/cyan]",
+        "kept": "[dim]kept[/dim]",
+    }
+    for status, field_path, value, source in rows:
+        table.add_row(badge.get(status, status), field_path, value, source)
+    console.print(table)
+
+    if result.changed:
+        console.print(
+            f"[green]wrote[/green] {result.profile_path} — "
+            f"{len(result.populated())} fields populated, "
+            f"{len(result.skipped())} kept, "
+            f"{sum(1 for u in result.updates if u.action == 'prompted')} from prompts."
+        )
+    else:
+        console.print("[dim]No file changes.[/dim]")
+
+
 @app.command("doctor")
 def doctor_cmd() -> None:
     """Run preflight checks against intervals.icu, coach.db, vectors, plans.
