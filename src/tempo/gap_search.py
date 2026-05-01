@@ -21,6 +21,13 @@ escalation:
    ingest tasks. The hard invariant is that ``web_search`` is only
    ever invoked with queries produced by :func:`suggest_research_queries`
    — never free-form. Cancel at the approval gate writes nothing.
+5. :func:`discover_unregistered_sources` is the escape hatch for the
+   "no registered source matches this topic at all" case (suggestions
+   came back empty). It runs a single UNCONSTRAINED search with the
+   raw gap query, tentatively classifies each result's domain, and
+   hands back a discovery surface for the same approval gate. This
+   path only fires when the constrained path produced zero candidates
+   — preserving the credibility-leak protection on every other run.
 """
 
 from __future__ import annotations
@@ -29,6 +36,7 @@ from collections.abc import Callable, Iterable, Sequence
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
+from urllib.parse import urlparse
 
 import yaml
 
@@ -437,18 +445,489 @@ def execute_research_gap(
     )
 
 
+# --- Discovery (no-registered-sources path) ------------------------------
+#
+# WHY this lives behind the [] gate (don't tear it out without re-reading):
+#
+# The whole credibility-leak protection in this module rests on never
+# sending a free-form query to a web search. Every constrained query is
+# `site:<registered domain>` so the surfaced URLs are guaranteed to be on
+# a domain we already trust at a known credibility tier. The discovery
+# branch deliberately violates that — it has to, because the user's whole
+# point with this branch is "I have NO source registered for this topic;
+# please find me one." We pay for that escape hatch with two compensating
+# controls:
+#   1. It only runs when `suggest_research_queries` returned []. On every
+#      other call the constrained path is the only path.
+#   2. Tentative classification stays *tentative* — every URL surfaced via
+#      discovery is `unvetted` unless the human upgrades it during the
+#      approval prompt, and proposed registry entries are written to
+#      `knowledge/sources-pending.yaml` (NEVER `sources.yaml`) so promotion
+#      to the trusted registry remains a deliberate human act.
+
+# Conservative high-credibility list: government, academic, peer-reviewed
+# medical publishers we recognise by name. Suffix-matched against the
+# hostname (so `bjsm.bmj.com` matches the `bmj.com` entry). Keep this list
+# short — when in doubt classify lower; humans can upgrade. New peer-review
+# publishers should be added explicitly, not by clever pattern-matching.
+_HIGH_CRED_DOMAINS: tuple[str, ...] = (
+    "pubmed.ncbi.nlm.nih.gov",
+    "ncbi.nlm.nih.gov",
+    "nih.gov",
+    "cdc.gov",
+    "who.int",
+    "jamanetwork.com",
+    "nejm.org",
+    "bmj.com",
+    "thelancet.com",
+    "sciencedirect.com",
+    "springer.com",
+    "nature.com",
+    "cell.com",
+    "wiley.com",
+    "tandfonline.com",
+    "oup.com",  # Oxford University Press
+    "cambridge.org",
+)
+
+# TLDs that imply mass-media / commercial journalism. We treat hosts on
+# these TLDs as `evidence_based_journalism` (vetted_needed) — never
+# auto-credible. Stored without the leading dot so they can be tested
+# with `host.endswith(tld)`.
+_VETTED_NEEDED_TLDS: tuple[str, ...] = (
+    ".com",
+    ".org",
+    ".net",
+    ".io",
+    ".co",
+)
+
+# Hostname tokens that strongly signal user-generated content / forums /
+# personal blogs. These map straight to `unvetted`.
+_UNVETTED_TOKENS: tuple[str, ...] = (
+    "reddit.com",
+    "quora.com",
+    "medium.com",
+    "substack.com",
+    "wordpress.com",
+    "blogspot.",
+    "tumblr.com",
+    "facebook.com",
+    "twitter.com",
+    "x.com",
+    "youtube.com",
+    "stackexchange.com",
+    "stackoverflow.com",
+    "letsrun.com",  # forums
+    "slowtwitch.com",  # forums
+)
+
+
+def _hostname_of(url: str) -> str | None:
+    try:
+        host = urlparse(url).hostname
+    except ValueError:
+        return None
+    if not host:
+        return None
+    return host.removeprefix("www.").lower()
+
+
+def _suffix_match(host: str, candidates: Iterable[str]) -> bool:
+    return any(host == c or host.endswith("." + c) for c in candidates)
+
+
+@dataclass(frozen=True)
+class DomainClassification:
+    """Tentative credibility for a domain we don't have in sources.yaml.
+
+    ``status`` is ``"known"`` when the URL maps onto a registered source,
+    ``"unknown"`` otherwise. ``credibility`` mirrors the registered tag for
+    known domains and a heuristic guess for unknown ones (see the comment
+    at the top of the discovery section for why those guesses stay
+    tentative). ``rationale`` is a one-phrase explanation surfaced to the
+    user so they can make an informed approval call.
+    """
+
+    domain: str
+    status: str  # "known" | "unknown"
+    credibility: str  # heuristic guess, or registered tag for known
+    rationale: str
+    matched_source_id: str | None = None
+
+
+def classify_domain(
+    url: str,
+    *,
+    sources: list[dict[str, Any]] | None = None,
+) -> DomainClassification:
+    """Classify a URL's domain against the registered sources first, then
+    fall back to suffix heuristics. Heuristic outcomes are deliberately
+    conservative: government / academic / known peer-review publishers are
+    high; mass-media TLDs default to ``vetted_needed``; forum-shaped hosts
+    are ``unvetted``."""
+    host = _hostname_of(url) or ""
+    if not host:
+        return DomainClassification(
+            domain="",
+            status="unknown",
+            credibility="unvetted",
+            rationale="URL had no parseable hostname",
+        )
+
+    sources = sources if sources is not None else load_sources()
+    for src in sources:
+        registered_domain = (src.get("domain") or "").lower()
+        if not registered_domain:
+            continue
+        if host == registered_domain or host.endswith("." + registered_domain):
+            return DomainClassification(
+                domain=host,
+                status="known",
+                credibility=src.get("credibility", "unvetted"),
+                rationale=f"matches registered source {src.get('id') or '?'}",
+                matched_source_id=src.get("id"),
+            )
+
+    # Strong unvetted signals win first — a `.com` forum is still a forum.
+    if any(tok in host for tok in _UNVETTED_TOKENS):
+        return DomainClassification(
+            domain=host,
+            status="unknown",
+            credibility="unvetted",
+            rationale="forum / user-generated / personal-blog host",
+        )
+
+    if host.endswith(".gov") or host.endswith(".edu"):
+        return DomainClassification(
+            domain=host,
+            status="unknown",
+            credibility="peer_reviewed",
+            rationale="government / academic TLD",
+        )
+
+    if _suffix_match(host, _HIGH_CRED_DOMAINS):
+        return DomainClassification(
+            domain=host,
+            status="unknown",
+            credibility="peer_reviewed",
+            rationale="known peer-review or institutional publisher",
+        )
+
+    if any(host.endswith(tld) for tld in _VETTED_NEEDED_TLDS):
+        return DomainClassification(
+            domain=host,
+            status="unknown",
+            credibility="evidence_based_journalism",
+            rationale="mass-media TLD — needs human vetting before it counts as evidence",
+        )
+
+    return DomainClassification(
+        domain=host,
+        status="unknown",
+        credibility="unvetted",
+        rationale="no recognised credibility signal",
+    )
+
+
+@dataclass(frozen=True)
+class DiscoveryCandidate:
+    """A web-search hit from the unconstrained discovery path.
+
+    Carries the tentative :class:`DomainClassification` so the approval
+    surface can show "[unvetted, mass-media TLD] example.com — <title>"
+    and let the user decide whether to ingest at all and whether to draft
+    a `sources-pending.yaml` entry.
+    """
+
+    url: str
+    title: str
+    snippet: str
+    classification: DomainClassification
+
+
+@dataclass(frozen=True)
+class DiscoveryApproval:
+    """Per-candidate decision returned by the discovery approval callback.
+
+    ``ingest`` — bring this URL through /ingest-research.
+    ``register`` — also append a draft entry for this domain to
+        ``knowledge/sources-pending.yaml`` (the human still has to promote).
+    ``credibility_override`` — optional human override of the heuristic tag.
+        When ``None``, the classification's tentative tag is kept. Setting
+        this to a stronger tier is the ONLY way an unvetted result becomes
+        anything else — the heuristic never auto-upgrades.
+    """
+
+    index: int
+    ingest: bool
+    register: bool
+    credibility_override: str | None = None
+
+
+@dataclass(frozen=True)
+class PendingSourceEntry:
+    """Draft entry for ``knowledge/sources-pending.yaml``.
+
+    Mirrors the shape of ``sources.yaml`` entries (id, name, credibility,
+    topics, domain) plus a discovery audit trail (``proposed_via``,
+    ``proposed_for_query``, ``proposed_at_isoweek``-style note). The pending
+    file is APPEND-ONLY from this module's perspective — never written to
+    ``sources.yaml`` directly.
+    """
+
+    id: str
+    name: str
+    credibility: str
+    topics: list[str]
+    domain: str
+    proposed_via: str = "research-gap-discovery"
+    proposed_for_query: str = ""
+    rationale: str = ""
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "id": self.id,
+            "name": self.name,
+            "credibility": self.credibility,
+            "topics": list(self.topics),
+            "domain": self.domain,
+            "proposed_via": self.proposed_via,
+            "proposed_for_query": self.proposed_for_query,
+            "rationale": self.rationale,
+        }
+
+
+@dataclass(frozen=True)
+class DiscoveryExecution:
+    """Outcome of :func:`discover_unregistered_sources`.
+
+    ``approved`` is False when the user cancelled (returned no
+    approvals) or when there were no discovery candidates at all.
+    ``tasks`` and ``pending_entries`` are both empty in that case —
+    cancel writes nothing.
+    """
+
+    gap: KnowledgeGap
+    candidates: list[DiscoveryCandidate]
+    approved: bool
+    tasks: list[IngestTask]
+    pending_entries: list[PendingSourceEntry]
+
+
+DiscoveryApproveFn = Callable[
+    [Sequence[DiscoveryCandidate]], Sequence[DiscoveryApproval]
+]
+
+
+def _slug_for_domain(host: str) -> str:
+    return host.replace(".", "-").lower()
+
+
+def discover_unregistered_sources(
+    gap: KnowledgeGap,
+    *,
+    web_search: WebSearchFn,
+    approve: DiscoveryApproveFn,
+    sources_path: Path | None = None,
+    max_results: int = 10,
+) -> DiscoveryExecution:
+    """Run an UNCONSTRAINED search for the gap query and surface results
+    with tentative domain classification.
+
+    HARD invariant: callers must only invoke this when
+    :func:`suggest_research_queries` returned [] — i.e. there is no
+    registered source for this topic. The CLI ``--execute`` flow enforces
+    that gating; tests should mirror it.
+
+    Args:
+        gap: The detected gap whose ``query`` will be sent free-form.
+        web_search: Callable taking a single query and yielding
+            :class:`WebSearchResult` values. Same contract as
+            :func:`execute_research_gap`.
+        approve: Callable taking the candidate list and returning
+            per-candidate :class:`DiscoveryApproval` decisions. Returning
+            an empty sequence (or an all-``ingest=False, register=False``
+            sequence) means cancel — nothing is written.
+        sources_path: Override for ``knowledge/sources.yaml`` (tests).
+        max_results: Cap on the unconstrained-search result list.
+    """
+    sources = load_sources(sources_path)
+    seen_urls: set[str] = set()
+    candidates: list[DiscoveryCandidate] = []
+    for raw in web_search(gap.query):
+        if not raw.url or raw.url in seen_urls:
+            continue
+        seen_urls.add(raw.url)
+        classification = classify_domain(raw.url, sources=sources)
+        candidates.append(
+            DiscoveryCandidate(
+                url=raw.url,
+                title=raw.title or raw.url,
+                snippet=raw.snippet,
+                classification=classification,
+            )
+        )
+        if len(candidates) >= max_results:
+            break
+
+    if not candidates:
+        return DiscoveryExecution(
+            gap=gap,
+            candidates=[],
+            approved=False,
+            tasks=[],
+            pending_entries=[],
+        )
+
+    decisions = list(approve(candidates))
+    actionable = [
+        d for d in decisions if 0 <= d.index < len(candidates) and (d.ingest or d.register)
+    ]
+    if not actionable:
+        return DiscoveryExecution(
+            gap=gap,
+            candidates=candidates,
+            approved=False,
+            tasks=[],
+            pending_entries=[],
+        )
+
+    tasks: list[IngestTask] = []
+    pending_entries: list[PendingSourceEntry] = []
+    pending_by_domain: dict[str, PendingSourceEntry] = {}
+
+    for d in actionable:
+        c = candidates[d.index]
+        # Human override is the only way to leave `unvetted` for something
+        # higher than the heuristic guessed. We don't auto-promote on
+        # behalf of the user, even if the URL came back from a `.gov`.
+        credibility = d.credibility_override or c.classification.credibility
+        if d.ingest:
+            # Synthesise a minimal "suggestion" so the IngestTask shape
+            # stays compatible with the constrained path's downstream
+            # consumers — but mark source_id as "unlisted" so the
+            # frontmatter audit makes the discovery origin obvious.
+            sug = ResearchQuerySuggestion(
+                source_id="unlisted",
+                source_name=c.classification.domain or "(unknown domain)",
+                credibility=credibility,
+                query=gap.query,
+                domain=c.classification.domain or None,
+            )
+            tasks.append(
+                IngestTask(
+                    url=c.url,
+                    title=c.title,
+                    credibility=credibility,
+                    suggestion=sug,
+                    gap_query=gap.query,
+                    frontmatter_extras={
+                        "ingest_via": "research-gap-discovery",
+                        "gap_query": gap.query,
+                        "suggestion": gap.query,
+                        "source_id": "unlisted",
+                        "domain_classification": c.classification.rationale,
+                    },
+                )
+            )
+        if d.register:
+            host = c.classification.domain
+            if not host or host in pending_by_domain:
+                continue
+            entry = PendingSourceEntry(
+                id=_slug_for_domain(host),
+                name=host,
+                credibility=credibility,
+                topics=[gap.topic] if gap.topic else ["unsorted"],
+                domain=host,
+                proposed_via="research-gap-discovery",
+                proposed_for_query=gap.query,
+                rationale=c.classification.rationale,
+            )
+            pending_by_domain[host] = entry
+            pending_entries.append(entry)
+
+    return DiscoveryExecution(
+        gap=gap,
+        candidates=candidates,
+        approved=True,
+        tasks=tasks,
+        pending_entries=pending_entries,
+    )
+
+
+def write_pending_sources(
+    entries: Sequence[PendingSourceEntry],
+    *,
+    path: Path | None = None,
+) -> Path:
+    """Append-or-merge ``entries`` into ``knowledge/sources-pending.yaml``.
+
+    Existing entries (matched on ``domain``) are NOT clobbered. New entries
+    are appended. The file is created with a header explaining its purpose
+    if it doesn't exist. Returns the path written to.
+
+    NEVER writes to ``sources.yaml`` — promotion stays a deliberate human
+    act. That hard rule is the whole reason for keeping this in a
+    separate file.
+    """
+    target = path or (repo_root() / "knowledge" / "sources-pending.yaml")
+    target.parent.mkdir(parents=True, exist_ok=True)
+
+    existing_doc: dict[str, Any] = {}
+    if target.is_file():
+        with target.open(encoding="utf-8") as f:
+            loaded = yaml.safe_load(f) or {}
+        if isinstance(loaded, dict):
+            existing_doc = loaded
+
+    existing_list = list(existing_doc.get("pending") or [])
+    existing_domains = {
+        (item.get("domain") or "").lower() for item in existing_list if isinstance(item, dict)
+    }
+
+    for entry in entries:
+        if entry.domain.lower() in existing_domains:
+            continue
+        existing_list.append(entry.to_dict())
+        existing_domains.add(entry.domain.lower())
+
+    out_doc = {
+        "_note": (
+            "Draft entries proposed by research-gap discovery. "
+            "Promotion to sources.yaml is a deliberate human act — "
+            "review credibility and topics before moving an entry."
+        ),
+        "pending": existing_list,
+    }
+
+    with target.open("w", encoding="utf-8") as f:
+        yaml.safe_dump(out_doc, f, sort_keys=False)
+    return target
+
+
 __all__ = [
     "ApproveFn",
+    "DiscoveryApproval",
+    "DiscoveryApproveFn",
+    "DiscoveryCandidate",
+    "DiscoveryExecution",
+    "DomainClassification",
     "FetchCandidate",
     "IngestTask",
     "KnowledgeGap",
+    "PendingSourceEntry",
     "ResearchGapExecution",
     "ResearchQuerySuggestion",
     "RetrievalConfidence",
     "WebSearchFn",
     "WebSearchResult",
+    "classify_domain",
     "detect_gap",
+    "discover_unregistered_sources",
     "execute_research_gap",
     "load_sources",
     "suggest_research_queries",
+    "write_pending_sources",
 ]

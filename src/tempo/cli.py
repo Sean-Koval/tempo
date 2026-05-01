@@ -445,6 +445,7 @@ def research_gap_cmd(
     autonomous researcher. Approval is always explicit.
     """
     import json as _json
+    from typing import Any
 
     from .gap_search import (
         KnowledgeGap,
@@ -485,7 +486,7 @@ def research_gap_cmd(
 
         gap = result
         suggestions = suggest_research_queries(gap, k=top_k, topic_filter=topic_arg)
-        payload = {
+        payload: dict[str, Any] = {
             "gap_detected": True,
             "query": query,
             "topic": topic_arg,
@@ -518,9 +519,39 @@ def research_gap_cmd(
                 "gap_query, suggestion, source_id to the resulting frontmatter."
             ),
         }
-        typer.echo(_json.dumps(payload, indent=2))
         if not suggestions:
-            raise typer.Exit(code=2)
+            # No registered source matches the topic. Switch into discovery
+            # mode: the slash command is allowed to fire ONE unconstrained
+            # WebSearch with the raw gap query. The brief flips
+            # `queries_constrained_to_suggestions` so the slash command
+            # routes to the discovery runbook (and the matching log_decision
+            # gap_reason). This is the ticket-uqc behaviour and the only
+            # path on which an unconstrained search may run.
+            payload["discovery_required"] = True
+            payload["constraints"]["queries_constrained_to_suggestions"] = False
+            payload["constraints"]["unconstrained_query"] = query
+            payload["constraints"]["log_decision_gap_reason_prefix"] = (
+                "no_registered_sources"
+            )
+            payload["runbook"] = (
+                "No registered source matched this topic. Run a single "
+                "unconstrained WebSearch with the raw query, classify each "
+                "returned domain (heuristic: .gov/.edu/known peer-review "
+                "publishers => peer_reviewed; mass-media TLD => "
+                "evidence_based_journalism (vetted_needed); forum/blog host "
+                "=> unvetted; matched registered domain => its registered "
+                "tag). Surface URLs via AskUserQuestion with the tentative "
+                "credibility AND a per-domain 'register this source?' "
+                "toggle. On approval, feed approved URLs through "
+                "/ingest-research (credibility stays unvetted unless the "
+                "human upgrades it explicitly) AND append register-toggled "
+                "domains to knowledge/sources-pending.yaml — NEVER to "
+                "sources.yaml. Cancel writes nothing. log_decision "
+                "rationale MUST start with 'no_registered_sources' so "
+                "future search_memory finds these first-time-on-topic "
+                "cases."
+            )
+        typer.echo(_json.dumps(payload, indent=2))
         return
 
     if not isinstance(result, KnowledgeGap):
