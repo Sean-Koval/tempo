@@ -58,3 +58,17 @@ description: Bike session archetypes. Library refs win over invention.
 - **TSS:** 110–160
 - **Structure:** 15 WU → 4–6×5–8min sustained climb @ 92–105%FTP, cadence 60–75 (seated unless terrain forces standing) with descent recovery → 10 CD. Outdoor preferred; ERG-mode trainer is acceptable substitute.
 - **Notes:** stop the set if cadence drops < 55 or perceived knee load spikes (R-7 watchword).
+
+### `vo2_intervals_bike`
+- **Purpose:** raise VO2max ceiling; supports threshold ceiling indirectly
+- **Duration:** 60–80 min
+- **TSS:** 80–120
+- **Structure:** 15 WU Z2 → 5–8×3min @ 106–120%FTP with 3min Z2 recovery → optional 10–15min Z3 sustain → 10 CD
+- **Notes:** keep recovery long enough to hit target watts on each rep; if last interval drops > 10% below first, end the set. Pairs poorly with same-day or next-day high-intensity strength.
+
+### `cadence_neuromuscular_bike`
+- **Purpose:** pedal-stroke smoothness, neuromuscular recruitment, easy intensity day
+- **Duration:** 40–60 min
+- **TSS:** 30–55
+- **Structure:** 10 WU → 8×[30sec max-cadence (100+ RPM) → 90sec Z2] → 10×[20sec Z5 sprint → 40sec Z2] → 5 CD
+- **Notes:** load is low; the stimulus is neural, not metabolic. Use during recovery weeks or as the lighter of two midweek bike days. Does not count as a "hard" session for the back-to-back rule.

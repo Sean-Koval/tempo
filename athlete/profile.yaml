@@ -1,74 +1,99 @@
-# Athlete profile — current physiological state.
-# Update thresholds after every field test; keep zones in sync.
-# Sourced partially from intervals.icu — `coach sync` can seed these.
-
 athlete:
   name: Sean Koval
-  dob: # YYYY-MM-DD — for age-graded and HR zone calcs
-  weight_kg:       # TODO
-  height_cm:       # TODO
-
+  dob: '1995-09-05'
+  weight_kg: 65.8
+  height_cm: 173
 thresholds:
-  # Each zone-defining threshold carries provenance so stale tests
-  # surface as calibration debt instead of silently driving sessions.
-  # source: race_result | field_test | manual_estimate | physiology_lab
   ftp_w:
-    value:                       # TODO — most recent 20-min or ramp test (W)
-    set_at:                      # YYYY-MM-DD
-    source: manual_estimate
-    source_ref:                  # "<plan-week|race-id|note>"
+    value: 250
+    set_at: '2026-05-01'
+    source: intervals_import
+    source_ref: intervals.icu/athlete/i536860
   lthr_bpm:
-    value:                       # TODO — lactate threshold HR (bpm)
-    set_at:
-    source: manual_estimate
-    source_ref:
+    value: 172
+    set_at: '2026-05-01'
+    source: intervals_import
+    source_ref: intervals.icu/athlete/i536860
   run_threshold_pace:
-    value:                       # "4:15/km" or "6:50/mi"
-    set_at:
+    value: 6:30/mi
+    set_at: '2026-05-01'
     source: manual_estimate
-    source_ref:
+    source_ref: Sean self-report — refine with field test
   swim_css_pace:
-    value:                       # "1:35/100m" — critical swim speed
-    set_at:
+    value: null
+    set_at: null
     source: manual_estimate
-    source_ref:
+    source_ref: not yet swimming — set after first CSS test (e.g. 2x400m TT)
   max_hr:
-    value:                       # TODO
-    set_at:
-    source: manual_estimate
-    source_ref:
-  resting_hr:                    # TODO — scalar, not a zone-defining threshold
-
+    value: 190
+    set_at: '2026-05-01'
+    source: intervals_import
+    source_ref: intervals.icu/athlete/i536860
+  resting_hr: 52
 zones:
-  # Bike — %FTP (Coggan 7-zone)
   bike_power:
-    z1_active_recovery: [0, 55]
-    z2_endurance: [56, 75]
-    z3_tempo: [76, 90]
-    z4_lactate_threshold: [91, 105]
-    z5_vo2max: [106, 120]
-    z6_anaerobic: [121, 150]
-    z7_neuromuscular: [151, 200]
-  # Run — Friel 7-zone by LTHR
+    z1_active_recovery:
+    - 0
+    - 55
+    z2_endurance:
+    - 56
+    - 75
+    z3_tempo:
+    - 76
+    - 90
+    z4_lactate_threshold:
+    - 91
+    - 105
+    z5_vo2max:
+    - 106
+    - 120
+    z6_anaerobic:
+    - 121
+    - 150
+    z7_neuromuscular:
+    - 151
+    - 999
   run_hr:
-    z1: [0, 85]
-    z2: [85, 89]
-    z3: [90, 94]
-    z4: [95, 99]
-    z5a: [100, 102]
-    z5b: [103, 106]
-    z5c: [107, 200]
-
+    z1:
+    - 0
+    - 145
+    z2:
+    - 146
+    - 153
+    z3:
+    - 154
+    - 162
+    z4:
+    - 163
+    - 171
+    z5a:
+    - 172
+    - 176
+    z5b:
+    - 177
+    - 181
+    z5c:
+    - 182
+    - 190
 prs:
-  # Populate as you re-establish references.
-  5k_run: # "18:45"
-  10k_run:
-  half_marathon:
-  marathon:
-  20min_power:
-  ftp_bike:
-  half_ironman: # goal: sub-1:45 half is listed; note this is run PR, not IM 70.3
-  full_ironman:
-
-strengths: []   # e.g., ["long-duration aerobic", "bike pacing discipline"]
-limiters: []    # e.g., ["run durability at volume", "threshold run capacity"]
+  # Standard schema slots
+  5k_run: '24:24'
+  10k_run: '49:49'
+  half_marathon: null
+  marathon: null
+  20min_power: null
+  ftp_bike: null
+  half_ironman: null
+  full_ironman: null
+  # Additional run PRs (Sean self-report 2026-05-01).
+  # Future: tempo-b4b `coach refresh-prs` will rebuild this from intervals best-efforts.
+  other_prs:
+    400m_run: '1:13'
+    800m_run: '3:25'      # 1/2 mile
+    1k_run: '4:17'
+    1mi_run: '7:04'
+    2mi_run: '15:32'
+    15k_run: '1:15:23'
+    10mi_run: '1:22:07'
+strengths: []
+limiters: []
