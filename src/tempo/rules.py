@@ -82,6 +82,20 @@ class InjuryFlag:
 
 
 @dataclass
+class RaceInWeek:
+    """Race that falls inside the week being drafted.
+
+    ``priority`` mirrors race-calendar.yaml's A/B/C convention. R-19 reads
+    this to enforce per-priority taper shape (full taper for A is handled
+    by phase composition; B requires micro-taper; C trains through).
+    """
+
+    race_id: str
+    date: str  # YYYY-MM-DD
+    priority: str  # "A" | "B" | "C"
+
+
+@dataclass
 class RulesContext:
     """All inputs the rule registry needs to validate a week.
 
@@ -95,6 +109,7 @@ class RulesContext:
     active_injuries: tuple[InjuryFlag, ...] = ()
     current_phase: str | None = None
     is_taper_or_peak: bool = False
+    race_in_week: RaceInWeek | None = None  # B/C race week → R-19 fires
 
 
 @dataclass
@@ -505,6 +520,83 @@ def r18_gut_training(ctx: RulesContext) -> list[Violation]:
     return []  # needs cross-session athlete-tested.yaml lookup
 
 
+@register_rule(
+    rule_id="R-19",
+    severity="SOFT",
+    topic="session_placement",
+    name="Race priority taper",
+)
+def r19_race_priority_taper(ctx: RulesContext) -> list[Violation]:
+    """Per-priority taper shape on a race week.
+
+    A-race weeks are tapered by phase composition (full taper_* phase) — R-19
+    doesn't need to fire there. B-race weeks require a micro-taper: Mon-Thu
+    volume cut by ~20% vs the prior week, plus an opener Friday session.
+    C-race weeks train through with no taper-shape adjustment.
+
+    Why SOFT: Sean may consciously choose to trial race-pace through a B-race
+    or skip the opener for a logistically tight week — those are valid coaching
+    choices that get logged in changelog.md. The override path captures that.
+    """
+    race = ctx.race_in_week
+    if race is None:
+        return []
+    priority = (race.priority or "").upper()
+    if priority not in {"B", "C"}:
+        return []
+
+    out: list[Violation] = []
+    sessions = ctx.week_draft.sessions
+
+    if priority == "C":
+        return out  # train-through; no shape constraint
+
+    # B-race week: Mon-Thu volume vs prior week's Mon-Thu volume.
+    if ctx.prior_week_draft is None:
+        return out  # no baseline to compare against; surface nothing
+
+    cur_mon_thu = _mon_thu_duration_total(sessions)
+    prev_mon_thu = _mon_thu_duration_total(ctx.prior_week_draft.sessions)
+    if prev_mon_thu > 0 and cur_mon_thu > prev_mon_thu * 0.85:
+        # 0.85 = 15% reduction floor; ticket asks for ~20% cut, so anything
+        # above 85% of prior week's volume fails to deliver the micro-taper.
+        out.append(
+            Violation(
+                rule_id="R-19",
+                severity="SOFT",
+                message=(
+                    f"B-race week ({race.race_id} on {race.date}): Mon-Thu volume "
+                    f"{cur_mon_thu // 60}min is {cur_mon_thu / prev_mon_thu * 100:.0f}% "
+                    f"of prior week ({prev_mon_thu // 60}min); micro-taper expects "
+                    "~80% (≥20% cut)."
+                ),
+                session_id=None,
+                override_path=_SOFT_OVERRIDE,
+            )
+        )
+
+    has_friday_opener = any(
+        s.day == "Friday" and (s.target_duration_s or 0) > 0
+        for s in sessions
+    )
+    if not has_friday_opener:
+        out.append(
+            Violation(
+                rule_id="R-19",
+                severity="SOFT",
+                message=(
+                    f"B-race week ({race.race_id} on {race.date}): no Friday "
+                    "opener session — micro-taper expects a short race-pace "
+                    "primer the day before."
+                ),
+                session_id=None,
+                override_path=_SOFT_OVERRIDE,
+            )
+        )
+
+    return out
+
+
 # --- Helpers ---------------------------------------------------------------
 
 
@@ -514,6 +606,14 @@ def _days_between(a: str, b: str) -> int:
     da = _date.fromisoformat(a)
     db = _date.fromisoformat(b)
     return (da - db).days
+
+
+_MON_THU = frozenset({"Monday", "Tuesday", "Wednesday", "Thursday"})
+
+
+def _mon_thu_duration_total(sessions: list[Session]) -> int:
+    """Sum target_duration_s for sessions on Mon-Thu (R-19 micro-taper baseline)."""
+    return sum((s.target_duration_s or 0) for s in sessions if s.day in _MON_THU)
 
 
 def _longest_run(week: WeekDraft) -> Session | None:
@@ -543,6 +643,7 @@ def parse_decision_rules_md(path: Path) -> list[tuple[str, str, str]]:
 
 __all__ = [
     "InjuryFlag",
+    "RaceInWeek",
     "RulesContext",
     "Session",
     "Severity",

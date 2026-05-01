@@ -245,6 +245,150 @@ def test_r17_does_not_fire_for_short_run() -> None:
     assert [v for v in rules.validate_week(ctx) if v.rule_id == "R-17"] == []
 
 
+# --- R-19 Race priority taper (tempo-wk7) --------------------------------
+
+
+def _full_volume_week(week_id: str = "2026-W37") -> rules.WeekDraft:
+    """A normal week's Mon-Thu — used as the prior-week baseline for R-19."""
+    return _week(
+        [
+            _session(sid="mon-z2", sport="bike", day="Monday", date="2026-09-07",
+                     duration_s=60 * 60),
+            _session(sid="tue-thresh", sport="bike", day="Tuesday", date="2026-09-08",
+                     duration_s=80 * 60),
+            _session(sid="wed-easy-run", sport="run", day="Wednesday", date="2026-09-09",
+                     duration_s=45 * 60),
+            _session(sid="thu-tempo-run", sport="run", day="Thursday", date="2026-09-10",
+                     duration_s=60 * 60),
+        ],
+        week_id=week_id,
+    )
+
+
+def test_r19_b_race_week_with_full_volume_flags_micro_taper_violation() -> None:
+    """Acceptance: a B-race week without a Mon-Thu cut surfaces R-19 unprompted."""
+    prior = _full_volume_week(week_id="2026-W37")
+    # This week's Mon-Thu volume == prior week's. No cut → R-19 fires.
+    current_sessions = [
+        _session(sid="mon-z2", sport="bike", day="Monday", date="2026-09-14",
+                 duration_s=60 * 60),
+        _session(sid="tue-thresh", sport="bike", day="Tuesday", date="2026-09-15",
+                 duration_s=80 * 60),
+        _session(sid="wed-easy-run", sport="run", day="Wednesday", date="2026-09-16",
+                 duration_s=45 * 60),
+        _session(sid="thu-tempo-run", sport="run", day="Thursday", date="2026-09-17",
+                 duration_s=60 * 60),
+        # Friday opener present so we isolate the volume violation:
+        _session(sid="fri-opener", sport="run", day="Friday", date="2026-09-18",
+                 duration_s=20 * 60),
+        _session(sid="sat-race", sport="run", day="Saturday", date="2026-09-19",
+                 duration_s=60 * 60),
+    ]
+    current = _week(current_sessions, week_id="2026-W38")
+    ctx = rules.RulesContext(
+        week_draft=current,
+        prior_week_draft=prior,
+        race_in_week=rules.RaceInWeek(
+            race_id="tune-up-10k", date="2026-09-19", priority="B"
+        ),
+    )
+    violations = [v for v in rules.validate_week(ctx) if v.rule_id == "R-19"]
+    assert len(violations) == 1
+    assert violations[0].severity == "SOFT"
+    assert "Mon-Thu volume" in violations[0].message
+    assert violations[0].override_path is not None
+
+
+def test_r19_b_race_week_with_micro_taper_passes() -> None:
+    prior = _full_volume_week(week_id="2026-W37")
+    # Cut Mon-Thu by 30% (well under 80% threshold).
+    current_sessions = [
+        _session(sid="mon-z2", sport="bike", day="Monday", date="2026-09-14",
+                 duration_s=40 * 60),
+        _session(sid="tue-thresh", sport="bike", day="Tuesday", date="2026-09-15",
+                 duration_s=50 * 60),
+        _session(sid="wed-easy-run", sport="run", day="Wednesday", date="2026-09-16",
+                 duration_s=30 * 60),
+        _session(sid="thu-tempo-run", sport="run", day="Thursday", date="2026-09-17",
+                 duration_s=40 * 60),
+        _session(sid="fri-opener", sport="run", day="Friday", date="2026-09-18",
+                 duration_s=20 * 60),
+        _session(sid="sat-race", sport="run", day="Saturday", date="2026-09-19",
+                 duration_s=60 * 60),
+    ]
+    current = _week(current_sessions, week_id="2026-W38")
+    ctx = rules.RulesContext(
+        week_draft=current,
+        prior_week_draft=prior,
+        race_in_week=rules.RaceInWeek(
+            race_id="tune-up-10k", date="2026-09-19", priority="B"
+        ),
+    )
+    assert [v for v in rules.validate_week(ctx) if v.rule_id == "R-19"] == []
+
+
+def test_r19_b_race_week_without_friday_opener_flags() -> None:
+    prior = _full_volume_week(week_id="2026-W37")
+    # Mon-Thu cut applied; Friday is a rest day → opener-missing violation only.
+    current_sessions = [
+        _session(sid="mon-z2", sport="bike", day="Monday", date="2026-09-14",
+                 duration_s=40 * 60),
+        _session(sid="tue-thresh", sport="bike", day="Tuesday", date="2026-09-15",
+                 duration_s=50 * 60),
+        _session(sid="wed-easy-run", sport="run", day="Wednesday", date="2026-09-16",
+                 duration_s=30 * 60),
+        _session(sid="thu-tempo-run", sport="run", day="Thursday", date="2026-09-17",
+                 duration_s=40 * 60),
+        _session(sid="sat-race", sport="run", day="Saturday", date="2026-09-19",
+                 duration_s=60 * 60),
+    ]
+    current = _week(current_sessions, week_id="2026-W38")
+    ctx = rules.RulesContext(
+        week_draft=current,
+        prior_week_draft=prior,
+        race_in_week=rules.RaceInWeek(
+            race_id="tune-up-10k", date="2026-09-19", priority="B"
+        ),
+    )
+    violations = [v for v in rules.validate_week(ctx) if v.rule_id == "R-19"]
+    assert len(violations) == 1
+    assert "opener" in violations[0].message.lower()
+
+
+def test_r19_c_race_week_does_not_fire() -> None:
+    """C races train through — no taper-shape requirement."""
+    prior = _full_volume_week(week_id="2026-W37")
+    current = _full_volume_week(week_id="2026-W38")
+    ctx = rules.RulesContext(
+        week_draft=current,
+        prior_week_draft=prior,
+        race_in_week=rules.RaceInWeek(
+            race_id="local-5k", date="2026-09-19", priority="C"
+        ),
+    )
+    assert [v for v in rules.validate_week(ctx) if v.rule_id == "R-19"] == []
+
+
+def test_r19_a_race_week_silent_taper_handled_by_phase() -> None:
+    """A-race weeks rely on the taper_* phase; R-19 stays silent."""
+    prior = _full_volume_week(week_id="2026-W37")
+    current = _full_volume_week(week_id="2026-W38")
+    ctx = rules.RulesContext(
+        week_draft=current,
+        prior_week_draft=prior,
+        race_in_week=rules.RaceInWeek(
+            race_id="goal-marathon", date="2026-09-19", priority="A"
+        ),
+    )
+    assert [v for v in rules.validate_week(ctx) if v.rule_id == "R-19"] == []
+
+
+def test_r19_no_race_in_week_silent() -> None:
+    week = _full_volume_week()
+    ctx = rules.RulesContext(week_draft=week)
+    assert [v for v in rules.validate_week(ctx) if v.rule_id == "R-19"] == []
+
+
 # --- HARD violations have None override_path -----------------------------
 
 

@@ -103,6 +103,19 @@ Race-day fueling must have been tolerated in ≥3 race-sim sessions before race 
 
 ---
 
+## Race priority
+
+### R-19 Race priority taper (SOFT)
+A race that falls inside the week being drafted must shape the week per its `priority` in `race-calendar.yaml`:
+
+- **A-race week** — full taper. Already enforced by phase composition (chain ends in `taper_*`); R-19 doesn't fire here.
+- **B-race week** — micro-taper. Mon-Thu volume cut by ~20% vs the prior week, plus a short opener Friday. The agent should not need user prompting to apply this.
+- **C-race week** — train through. No taper-shape adjustment; the C race is a session inside an otherwise normal week.
+
+Override is allowed (e.g., trial race-pace through a B-race), but the override goes in `changelog.md` like any other SOFT override.
+
+---
+
 ## Override protocol
 
 Any SOFT rule override requires:
