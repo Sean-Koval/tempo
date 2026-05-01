@@ -411,19 +411,165 @@ def test_compose_for_goal_maintenance_dated_uses_base_building() -> None:
     assert chain.phases[-1].id == "deload_test"
 
 
-def test_compose_for_goal_streak_not_supported() -> None:
-    """Streak/adventure types raise — they need different anchoring (future ticket)."""
+def test_compose_for_goal_streak_30day_default() -> None:
+    """Streak with no day-count hint defaults to the 30-day template."""
+    match = goals.athlete.GoalMatch(
+        kind="non_race",
+        data={
+            "id": "30-day-streak",
+            "type": "streak",
+            "by_date": "2026-06-01",
+        },
+    )
+    goal = goals.from_match(match)
+    chain = composition.compose_for_goal(goal, today=date(2026, 4, 26))
+    assert chain.template_id == "streak_30day_block"
+    ids = [p.id for p in chain.phases]
+    assert ids == ["streak_block"]
+    # Conservative ramp — streak is non-periodised, intensity stays low.
+    assert chain.phases[0].intensity_distribution.get("z1_z2", 0) >= 85
+    # No taper for non-race goals.
+    assert not chain.phases[-1].id.startswith("taper")
+
+
+def test_compose_for_goal_streak_100day_picks_longer_template() -> None:
+    """Explicit target_days=100 picks the streak_100day variant."""
     match = goals.athlete.GoalMatch(
         kind="non_race",
         data={
             "id": "100-day-ride-streak",
             "type": "streak",
+            "target_days": 100,
             "by_date": "2026-09-01",
         },
     )
     goal = goals.from_match(match)
-    with pytest.raises(composition.CompositionError):
-        composition.compose_for_goal(goal, today=date(2026, 4, 26))
+    chain = composition.compose_for_goal(goal, today=date(2026, 4, 26))
+    assert chain.template_id == "streak_100day_block"
+    assert chain.phases[0].id == "streak_block"
+
+
+def test_compose_for_goal_streak_distance_string_passes_through() -> None:
+    """Explicit distance like 'streak_100day' wins over heuristic sizing."""
+    match = goals.athlete.GoalMatch(
+        kind="non_race",
+        data={
+            "id": "named-streak",
+            "type": "streak",
+            "distance": "streak_100day",
+            "by_date": "2026-09-01",
+        },
+    )
+    goal = goals.from_match(match)
+    chain = composition.compose_for_goal(goal, today=date(2026, 4, 26))
+    assert chain.template_id == "streak_100day_block"
+
+
+def test_compose_for_goal_adventure_hike_rim_to_rim() -> None:
+    """Adventure goal with rim_to_rim distance picks the hike template,
+    ends in the simulation block, and is anchored on target_date."""
+    target = date(2026, 6, 1)
+    match = goals.athlete.GoalMatch(
+        kind="non_race",
+        data={
+            "id": "rim-to-rim-2026",
+            "type": "adventure",
+            "distance": "rim_to_rim",
+            "by_date": target.isoformat(),
+        },
+    )
+    goal = goals.from_match(match)
+    chain = composition.compose_for_goal(goal, today=date(2026, 5, 4))
+    assert chain.template_id == "adventure_hike_4wk"
+    assert chain.phases[-1].id == "adventure_simulation_block"
+    # Hike is run-dominant; simulation references long_run_z2 / hill_strides.
+    sim = chain.phases[-1]
+    assert sim.sport_focus.get("run", 0) >= 0.2
+    # No taper.
+    assert not chain.phases[-1].id.startswith("taper")
+    assert goal.target_date == target
+
+
+def test_compose_for_goal_adventure_audax_400_extends_prep() -> None:
+    """Audax 400km with extra runway extends adventure_prep_block, not the simulation."""
+    match = goals.athlete.GoalMatch(
+        kind="non_race",
+        data={
+            "id": "audax-400-2026",
+            "type": "adventure",
+            "distance": "audax_400",
+            "by_date": "2026-08-30",
+        },
+    )
+    goal = goals.from_match(match)
+    # 18 weeks runway from today=2026-04-26 → template is 8wk → prep stretches.
+    chain = composition.compose_for_goal(goal, today=date(2026, 4, 26))
+    assert chain.template_id == "adventure_ride_8wk"
+    assert chain.phases[-1].id == "adventure_simulation_block"
+    prep = next(p for p in chain.phases if p.id == "adventure_prep_block")
+    sim = next(p for p in chain.phases if p.id == "adventure_simulation_block")
+    # Sim stays in its 2-4wk band; prep absorbed the extra weeks.
+    assert 2 <= sim.weeks <= 4
+    assert prep.weeks >= 5
+    # Bike-dominant focus.
+    assert chain.sport_focus.get("bike", 0) >= 0.5
+
+
+def test_compose_for_goal_adventure_unknown_variant_defaults_to_ride() -> None:
+    """Unknown adventure variants fall back to the ride template — most
+    'adventure' entries Sean files are bike-shaped."""
+    match = goals.athlete.GoalMatch(
+        kind="non_race",
+        data={
+            "id": "mystery-adventure",
+            "type": "adventure",
+            "distance": "unknown_variant",
+            "by_date": "2026-08-30",
+        },
+    )
+    goal = goals.from_match(match)
+    chain = composition.compose_for_goal(goal, today=date(2026, 4, 26))
+    assert chain.template_id == "adventure_ride_8wk"
+
+
+def test_compose_for_goal_streak_does_not_break_race_path() -> None:
+    """Regression: race composition still works after streak/adventure routing landed."""
+    match = goals.athlete.GoalMatch(
+        kind="race",
+        data={
+            "id": "2026-half-marathon",
+            "distance": "half_marathon",
+            "date": "2026-08-01",
+        },
+    )
+    goal = goals.from_match(match)
+    chain = composition.compose_for_goal(goal, today=date(2026, 4, 26))
+    assert chain.phases[-1].id.startswith("taper")
+
+
+def test_streak_chain_schema_parity_with_race_chain() -> None:
+    """Schema parity: streak chains expose the same fields as race chains
+    so downstream code (plan-training-week, dashboards) doesn't branch."""
+    streak_match = goals.athlete.GoalMatch(
+        kind="non_race",
+        data={"id": "30-day-streak", "type": "streak"},
+    )
+    race_match = goals.athlete.GoalMatch(
+        kind="race",
+        data={"id": "ref-race", "distance": "marathon", "date": "2026-09-01"},
+    )
+    streak = composition.compose_for_goal(
+        goals.from_match(streak_match), today=date(2026, 4, 26)
+    )
+    race = composition.compose_for_goal(
+        goals.from_match(race_match), today=date(2026, 4, 26)
+    )
+    # Same top-level dataclass fields — no streak-specific extras.
+    assert set(streak.__dataclass_fields__) == set(race.__dataclass_fields__)
+    # Each phase exposes the same shape too.
+    assert set(streak.phases[0].__dataclass_fields__) == set(
+        race.phases[0].__dataclass_fields__
+    )
 
 
 def test_compose_for_goal_race_path_still_works() -> None:
