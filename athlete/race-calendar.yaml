@@ -3,8 +3,15 @@
 #
 # Priority semantics:
 #   A — peak for it; full taper, plan revolves around it.
-#   B — race through it; light freshening, no full taper.
+#   B — race through it; micro-taper (R-19), no full taper.
 #   C — train through; no taper, race-as-workout.
+#
+# Status semantics (default: confirmed when omitted):
+#   confirmed — registered, plan can anchor on it.
+#   tentative — likely-but-not-yet-registered; selectable but the agent
+#               should surface uncertainty when picking it.
+#   cancelled — withdrew or event was cancelled. Skipped by composer +
+#               amend.switch_target. Requires `cancelled_reason`.
 #
 # Every race added here should have a corresponding plan-id eventually.
 
@@ -14,6 +21,7 @@ races:
     date: 2027-05-01            # PLACEHOLDER — confirm exact date + race; replace before final taper math
     distance: half_ironman
     priority: A
+    status: confirmed
     location: "TBD"
     expected_conditions:
       terrain: "TBD"
@@ -36,7 +44,9 @@ races:
 #     name: "Ironman Lake Placid"
 #     date: 2026-07-26
 #     distance: ironman        # ironman | half_ironman | olympic | sprint | marathon | half | 10k | 5k
-#     priority: A
+#     priority: A               # A | B | C
+#     status: confirmed         # confirmed | tentative | cancelled (default: confirmed)
+#     # cancelled_reason: …    # required when status: cancelled
 #     location: "Lake Placid, NY"
 #     expected_conditions:
 #       terrain: "hilly, 6000ft climbing on bike"

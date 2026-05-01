@@ -13,11 +13,25 @@ from __future__ import annotations
 import re
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any
+from typing import Any, Literal
 
 import yaml
 
 from .paths import repo_root
+
+RaceStatus = Literal["confirmed", "tentative", "cancelled"]
+RacePriority = Literal["A", "B", "C"]
+_VALID_STATUSES: frozenset[str] = frozenset({"confirmed", "tentative", "cancelled"})
+_VALID_PRIORITIES: frozenset[str] = frozenset({"A", "B", "C"})
+
+
+class RaceCalendarError(ValueError):
+    """Raised when a race-calendar.yaml entry is structurally invalid.
+
+    The status / priority / cancelled_reason invariants are HARD: the composer
+    can't reason correctly if a cancelled race lacks a reason or a status
+    is misspelled. Surface the offending race id and field in the message.
+    """
 
 _ACTIVE_HEADING = re.compile(r"^##\s+active\b", re.IGNORECASE | re.MULTILINE)
 _HARD_HEADING = re.compile(r"^##\s+hard constraints\b", re.IGNORECASE | re.MULTILINE)
@@ -55,13 +69,61 @@ def load_goals(root: Path | None = None) -> list[dict[str, Any]]:
 
 
 def load_races(root: Path | None = None) -> list[dict[str, Any]]:
-    """Return the races list from athlete/race-calendar.yaml (may be empty)."""
+    """Return the races list from athlete/race-calendar.yaml (may be empty).
+
+    Each race dict is normalized: ``status`` defaults to ``"confirmed"`` when
+    absent (back-compat for entries authored before tempo-wk7 added the
+    field), and the schema is validated. Cancelled races without a
+    ``cancelled_reason`` raise :class:`RaceCalendarError` — the composer
+    silently skipping a race for an unstated reason is worse than failing
+    loud.
+    """
     path = athlete_dir(root) / "race-calendar.yaml"
     if not path.is_file():
         return []
     with path.open(encoding="utf-8") as f:
         doc = yaml.safe_load(f) or {}
-    return doc.get("races") or []
+    raw = doc.get("races") or []
+    return [_normalize_race(r) for r in raw]
+
+
+def _normalize_race(raw: dict[str, Any]) -> dict[str, Any]:
+    """Apply schema defaults + validate. Returns a shallow-copied dict."""
+    if not isinstance(raw, dict):
+        raise RaceCalendarError(f"race entry is not a mapping: {raw!r}")
+    out = dict(raw)
+    rid = out.get("id") or "<unnamed>"
+
+    status = out.get("status")
+    if status is None:
+        status = "confirmed"
+    elif status not in _VALID_STATUSES:
+        raise RaceCalendarError(
+            f"race {rid!r}: status={status!r} not in {sorted(_VALID_STATUSES)}"
+        )
+    out["status"] = status
+
+    priority = out.get("priority")
+    if priority is not None and priority not in _VALID_PRIORITIES:
+        raise RaceCalendarError(
+            f"race {rid!r}: priority={priority!r} not in {sorted(_VALID_PRIORITIES)}"
+        )
+
+    if status == "cancelled" and not out.get("cancelled_reason"):
+        raise RaceCalendarError(
+            f"race {rid!r}: status=cancelled requires cancelled_reason"
+        )
+    return out
+
+
+def selectable_races(root: Path | None = None) -> list[dict[str, Any]]:
+    """Races eligible to anchor a plan — i.e. anything not cancelled.
+
+    Tentative races are included: they may still happen, and the agent may
+    choose to plan against them with eyes open. Cancelled ones are filtered
+    out so /bootstrap-plan and amend.switch_target never select them.
+    """
+    return [r for r in load_races(root) if r.get("status") != "cancelled"]
 
 
 def find_goal(goal_id: str, *, root: Path | None = None) -> GoalMatch | None:
@@ -145,6 +207,9 @@ def hard_constraints(root: Path | None = None) -> list[str]:
 
 __all__ = [
     "GoalMatch",
+    "RaceCalendarError",
+    "RacePriority",
+    "RaceStatus",
     "active_injury_flags",
     "all_goal_ids",
     "athlete_dir",
@@ -153,4 +218,5 @@ __all__ = [
     "load_goals",
     "load_profile",
     "load_races",
+    "selectable_races",
 ]

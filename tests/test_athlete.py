@@ -134,3 +134,90 @@ def test_hard_constraints_parses_bullets(tmp_path: Path) -> None:
 def test_hard_constraints_missing_section(tmp_path: Path) -> None:
     _seed(tmp_path, "preferences.md", "# Prefs\n\n## Soft preferences\n\n- Foo\n")
     assert athlete.hard_constraints(root=tmp_path) == []
+
+
+# --- Race calendar schema (tempo-wk7) -------------------------------------
+
+
+def test_load_races_defaults_status_to_confirmed(tmp_path: Path) -> None:
+    """Existing entries without an explicit status are read as confirmed."""
+    _seed(
+        tmp_path,
+        "race-calendar.yaml",
+        "races:\n"
+        "  - id: legacy-race\n"
+        "    date: 2026-09-01\n"
+        "    distance: marathon\n"
+        "    priority: A\n",
+    )
+    races = athlete.load_races(root=tmp_path)
+    assert len(races) == 1
+    assert races[0]["status"] == "confirmed"
+
+
+def test_load_races_validates_status_value(tmp_path: Path) -> None:
+    import pytest
+
+    _seed(
+        tmp_path,
+        "race-calendar.yaml",
+        "races:\n"
+        "  - id: r1\n"
+        "    date: 2026-09-01\n"
+        "    status: maybe\n",
+    )
+    with pytest.raises(athlete.RaceCalendarError, match="status="):
+        athlete.load_races(root=tmp_path)
+
+
+def test_load_races_requires_cancelled_reason(tmp_path: Path) -> None:
+    import pytest
+
+    _seed(
+        tmp_path,
+        "race-calendar.yaml",
+        "races:\n"
+        "  - id: r1\n"
+        "    date: 2026-09-01\n"
+        "    status: cancelled\n",
+    )
+    with pytest.raises(athlete.RaceCalendarError, match="cancelled_reason"):
+        athlete.load_races(root=tmp_path)
+
+
+def test_load_races_validates_priority_value(tmp_path: Path) -> None:
+    import pytest
+
+    _seed(
+        tmp_path,
+        "race-calendar.yaml",
+        "races:\n"
+        "  - id: r1\n"
+        "    date: 2026-09-01\n"
+        "    priority: D\n",
+    )
+    with pytest.raises(athlete.RaceCalendarError, match="priority="):
+        athlete.load_races(root=tmp_path)
+
+
+def test_selectable_races_filters_cancelled(tmp_path: Path) -> None:
+    _seed(
+        tmp_path,
+        "race-calendar.yaml",
+        "races:\n"
+        "  - id: live-race\n"
+        "    date: 2026-09-01\n"
+        "    priority: A\n"
+        "  - id: dead-race\n"
+        "    date: 2026-10-01\n"
+        "    priority: A\n"
+        "    status: cancelled\n"
+        "    cancelled_reason: travel conflict\n"
+        "  - id: maybe-race\n"
+        "    date: 2026-11-01\n"
+        "    priority: B\n"
+        "    status: tentative\n",
+    )
+    selectable = athlete.selectable_races(root=tmp_path)
+    ids = {r["id"] for r in selectable}
+    assert ids == {"live-race", "maybe-race"}
