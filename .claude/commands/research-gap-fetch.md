@@ -50,8 +50,14 @@ uv run coach research-gap "$ARG_QUERY" --execute --top-k 3 [--topic <t>]
 Read the JSON. If `gap_detected` is false, stop — the local corpus answered
 the question. Show the user the top hits and exit.
 
-If `suggestions` is empty (no sources matched the topic filter), tell the
-user — they may want to add a source to `knowledge/sources.yaml`.
+If `suggestions` is non-empty, follow the constrained-search runbook in
+Steps 2–6 below.
+
+If `suggestions` is empty AND the brief sets `discovery_required: true`,
+the topic has no registered source. Switch to the **Discovery branch** at
+the bottom of this file (Step 2D) — that's the only path on which an
+unconstrained WebSearch is permitted, and the gap reason for `log_decision`
+becomes `no_registered_sources`.
 
 ## Step 2 — Run constrained WebSearch
 
@@ -114,3 +120,67 @@ Tell the user, terse:
 
 If cancelled at the approval gate, just say so — no decision logged, no
 files written.
+
+## Step 2D — Discovery branch (no registered source matched)
+
+This branch fires only when the brief from Step 1 has
+`discovery_required: true` (i.e. `suggestions == []`). It is the single
+exception to the "constrained queries only" rule. The whole point of the
+exception: the user has just told us the local registry has no source
+for this topic, so a `site:`-scoped search would return nothing useful.
+Compensating controls keep the credibility model honest:
+
+- The unconstrained search runs **once**, with the raw gap query.
+- Every URL surfaced gets a tentative classification by domain heuristic
+  (`.gov` / `.edu` / known peer-review publisher → `peer_reviewed`;
+  mass-media TLD → `evidence_based_journalism` (vetted_needed);
+  forum/blog host → `unvetted`; matched registered domain → its
+  registered tag).
+- Tentative tags stay tentative. Ingested notes are written `unvetted`
+  unless the user explicitly upgrades a domain during approval.
+- Domains the user marks "register" are appended to
+  `knowledge/sources-pending.yaml`. **Never** to `sources.yaml` — that
+  promotion remains a deliberate human act.
+
+### Discovery runbook
+
+1. Call WebSearch ONCE with the raw `query` field from the brief
+   (no `site:`, no paraphrase, no extra terms).
+2. For each result, classify the domain. The CLI emits
+   `constraints.unconstrained_query` so the slash command knows what
+   query to fire and `constraints.log_decision_gap_reason_prefix` so the
+   later decision call uses the right key.
+3. AskUserQuestion presents each result as:
+
+   ```
+   [<tentative-credibility>] <domain> — <title>
+     <url>
+     why: <classification rationale>
+     [ ] ingest this URL
+     [ ] register <domain> as a draft source (sources-pending.yaml)
+   ```
+
+4. On approval, for each ingest-checked URL run `/ingest-research <url>`.
+   Stamp the resulting note's frontmatter with:
+
+   ```yaml
+   ingest_via: research-gap-discovery
+   gap_query: "<original query>"
+   suggestion: "<original query>"
+   source_id: unlisted
+   domain_classification: "<rationale>"
+   ```
+
+   Credibility starts `unvetted` unless the user explicitly upgraded.
+5. For each register-checked domain, append a draft entry to
+   `knowledge/sources-pending.yaml` (use
+   `tempo.gap_search.write_pending_sources` from a small Python shim, or
+   the equivalent CLI verb if Sean adds one later — DO NOT edit
+   `sources.yaml`).
+6. `log_decision` rationale MUST start with the verbatim string
+   `no_registered_sources` followed by the gap query, the URLs ingested,
+   the domains proposed for registration, and the resulting note paths.
+   Future `search_memory` queries key off that prefix to find
+   first-time-on-topic cases.
+7. If the user cancels (no URLs ingested, no domains registered), write
+   nothing — no notes, no pending entries, no decision.
