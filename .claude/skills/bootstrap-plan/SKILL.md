@@ -106,6 +106,14 @@ Active injuries that map to `active_injury_no_impact` (e.g. BSI, stress
 fracture) automatically prepend `rehab_bike_only` + an appropriate
 `return_to_*` phase to multisport / run-anchored chains.
 
+Cancelled races (`status: cancelled` in race-calendar.yaml) are filtered
+out before goal selection — they cannot anchor a plan and `find_goal`
+plus `selectable_races` already exclude them. If two or more `confirmed`
+A-races sit within 8 weeks of the chosen goal, `compose_for_goal` raises
+`CompositionError` unless `multi_a=True` is passed. The multi-A composer
+itself is deferred — surface the collision to Sean and ask which race to
+sub-peak rather than force the flag.
+
 If the runway exceeds the template, the composer extends the earliest
 base phase rather than diluting build/peak. If a distance / metric
 isn't covered, it raises `CompositionError` — surface this to Sean
