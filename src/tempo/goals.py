@@ -66,6 +66,33 @@ _BASE_BUILDING_DATED = "base_building"
 _BASE_BUILDING_OPEN = "rolling_base_block"
 
 
+# Streak goals are sized by target day-count, not metric. A goal with
+# ``raw['target_days']`` (or a numeric ``target``) picks the closest
+# template; absent that, the ``distance`` field can name it directly
+# (e.g. ``streak_30day``). Default is 30-day — it's the safest ramp.
+_STREAK_VARIANTS: dict[int, str] = {
+    30: "streak_30day",
+    60: "streak_30day",  # 60-day reuses the 30-day template; composer stretches
+    100: "streak_100day",
+}
+_DEFAULT_STREAK_DISTANCE = "streak_30day"
+
+
+# Adventure goals route by terrain shape. ``goal.distance`` (or a
+# free-text variant in raw) tells us hike vs ride. Hike-shaped events
+# (rim_to_rim, summit, thru_hike) → adventure_hike; ride-shaped events
+# (audax_200/300/400/600, gravel_ultra) → adventure_ride. Unknown
+# variants default to adventure_ride — most "adventure" entries Sean
+# files will be bike-shaped given the existing fleet.
+_ADVENTURE_HIKE_VARIANTS: frozenset[str] = frozenset(
+    {"rim_to_rim", "summit", "thru_hike", "fastpack", "adventure_hike"}
+)
+_ADVENTURE_RIDE_VARIANTS: frozenset[str] = frozenset(
+    {"audax_200", "audax_300", "audax_400", "audax_600", "gravel_ultra", "adventure_ride"}
+)
+_DEFAULT_ADVENTURE_DISTANCE = "adventure_ride"
+
+
 class GoalSchemaError(ValueError):
     """Raised when a goals.yaml entry can't be normalized into a Goal.
 
@@ -197,12 +224,19 @@ def from_match(match: athlete.GoalMatch) -> Goal:
         # warning later if Sean wants. Don't block here.
         pass
 
+    # Streak / adventure goals carry a ``distance`` field too — it tags
+    # the variant (e.g. "streak_100day", "rim_to_rim", "audax_400") so
+    # template_distance_for can route without an extra heuristic.
+    declared_distance: str | None = None
+    if gtype in {"streak", "adventure"}:
+        declared_distance = data.get("distance")
+
     return Goal(
         id=str(gid),
         type=gtype,
         title=data.get("title") or data.get("name"),
         target_date=target_d,
-        distance=None,
+        distance=declared_distance,
         metric=data.get("metric"),
         current=data.get("current"),
         target=data.get("target"),
@@ -241,6 +275,42 @@ def template_distance_for(goal: Goal) -> str:
 
     if goal.type == "maintenance":
         return _BASE_BUILDING_DATED if goal.target_date else _BASE_BUILDING_OPEN
+
+    if goal.type == "streak":
+        # Prefer an explicit distance string (e.g. "streak_100day").
+        if goal.distance and goal.distance.startswith("streak_"):
+            return goal.distance
+        # Otherwise pick from target day count if numeric.
+        raw = goal.raw or {}
+        days_val = raw.get("target_days") or raw.get("days") or goal.target
+        try:
+            days = int(days_val) if days_val is not None else None
+        except (TypeError, ValueError):
+            days = None
+        if days is not None:
+            # Pick the largest variant <= days, falling back to default.
+            sized = sorted(_STREAK_VARIANTS.items())
+            chosen = _DEFAULT_STREAK_DISTANCE
+            for threshold, variant in sized:
+                if days >= threshold:
+                    chosen = variant
+            return chosen
+        return _DEFAULT_STREAK_DISTANCE
+
+    if goal.type == "adventure":
+        d = (goal.distance or "").strip().lower()
+        if d in _ADVENTURE_HIKE_VARIANTS:
+            return "adventure_hike"
+        if d in _ADVENTURE_RIDE_VARIANTS:
+            return "adventure_ride"
+        # Tolerate raw-field hints (e.g. raw['event_type']).
+        raw = goal.raw or {}
+        hint = str(raw.get("event_type") or raw.get("variant") or "").lower()
+        if hint in _ADVENTURE_HIKE_VARIANTS:
+            return "adventure_hike"
+        if hint in _ADVENTURE_RIDE_VARIANTS:
+            return "adventure_ride"
+        return _DEFAULT_ADVENTURE_DISTANCE
 
     raise GoalSchemaError(
         f"composer does not support goal type {goal.type!r} yet.",
