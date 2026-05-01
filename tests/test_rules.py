@@ -411,3 +411,121 @@ def test_all_hard_violations_have_no_override_path() -> None:
     for v in rules.validate_week(ctx):
         if v.severity == "HARD":
             assert v.override_path is None, f"HARD rule {v.rule_id} surfaced override_path"
+
+
+# --- R-20 active sub-program capacity ------------------------------------
+
+
+class _StubFragment:
+    """Duck-types tempo.fragments.PlanFragment for R-20 tests.
+
+    Avoids tmp-path YAML setup so the rule logic stays the focus. Real
+    fragment loading is exercised in test_fragments.py and the composition
+    hook tests.
+    """
+
+    def __init__(self, *, fragment_id: str, weekly_tss: float) -> None:
+        self.fragment_id = fragment_id
+        self._tss = weekly_tss
+
+    def estimated_weekly_tss(self) -> float:
+        return self._tss
+
+
+def test_r20_silent_when_no_active_fragments() -> None:
+    week = _week([
+        _session(sid="long-bike", sport="bike", day="Saturday",
+                 date="2026-05-02", target_tss=200, duration_s=3 * 3600)
+    ])
+    ctx = rules.RulesContext(
+        week_draft=week,
+        active_fragments=(),
+        phase_tss_upper=600.0,
+    )
+    assert [v for v in rules.validate_week(ctx) if v.rule_id == "R-20"] == []
+
+
+def test_r20_silent_when_no_phase_upper_set() -> None:
+    """Rule is data-driven; missing inputs shouldn't fire false positives."""
+    week = _week([
+        _session(sid="long-bike", sport="bike", day="Saturday",
+                 date="2026-05-02", target_tss=200, duration_s=3 * 3600)
+    ])
+    ctx = rules.RulesContext(
+        week_draft=week,
+        active_fragments=(_StubFragment(fragment_id="f1", weekly_tss=200),),
+        phase_tss_upper=None,
+    )
+    assert [v for v in rules.validate_week(ctx) if v.rule_id == "R-20"] == []
+
+
+def test_r20_within_15pct_band_is_silent() -> None:
+    """600 upper + 644 projected = +7%; under the 15% cap → no violation."""
+    week = _week([
+        _session(sid="bike1", sport="bike", day="Tuesday",
+                 date="2026-04-28", target_tss=300, duration_s=2 * 3600),
+        _session(sid="bike2", sport="bike", day="Saturday",
+                 date="2026-05-02", target_tss=300, duration_s=2 * 3600),
+    ])
+    ctx = rules.RulesContext(
+        week_draft=week,
+        active_fragments=(_StubFragment(fragment_id="strength", weekly_tss=44),),
+        phase_tss_upper=600.0,
+    )
+    assert [v for v in rules.validate_week(ctx) if v.rule_id == "R-20"] == []
+
+
+def test_r20_fires_when_overage_exceeds_15pct() -> None:
+    """600 upper + 700 projected = +16.7%; over the cap → SOFT violation."""
+    week = _week([
+        _session(sid="bike1", sport="bike", day="Tuesday",
+                 date="2026-04-28", target_tss=300, duration_s=2 * 3600),
+        _session(sid="bike2", sport="bike", day="Saturday",
+                 date="2026-05-02", target_tss=300, duration_s=2 * 3600),
+    ])
+    ctx = rules.RulesContext(
+        week_draft=week,
+        active_fragments=(_StubFragment(fragment_id="strength", weekly_tss=100),),
+        phase_tss_upper=600.0,
+    )
+    violations = [v for v in rules.validate_week(ctx) if v.rule_id == "R-20"]
+    assert len(violations) == 1
+    v = violations[0]
+    assert v.severity == "SOFT"
+    assert v.override_path is not None
+    assert "strength" in v.message  # fragment id surfaced
+    assert "700" in v.message       # projected total surfaced
+
+
+def test_r20_aggregates_multiple_fragments() -> None:
+    """Two fragments at 60 each + 600 of phase work = 720 = +20% → fires."""
+    week = _week([
+        _session(sid="bike", sport="bike", day="Saturday",
+                 date="2026-05-02", target_tss=600, duration_s=4 * 3600),
+    ])
+    ctx = rules.RulesContext(
+        week_draft=week,
+        active_fragments=(
+            _StubFragment(fragment_id="legs", weekly_tss=60),
+            _StubFragment(fragment_id="core", weekly_tss=60),
+        ),
+        phase_tss_upper=600.0,
+    )
+    violations = [v for v in rules.validate_week(ctx) if v.rule_id == "R-20"]
+    assert len(violations) == 1
+    assert "legs" in violations[0].message
+    assert "core" in violations[0].message
+
+
+def test_r20_at_exact_15pct_boundary_silent() -> None:
+    """600 * 1.15 = 690; projecting exactly 690 → at-boundary, silent."""
+    week = _week([
+        _session(sid="bike", sport="bike", day="Saturday",
+                 date="2026-05-02", target_tss=600, duration_s=4 * 3600),
+    ])
+    ctx = rules.RulesContext(
+        week_draft=week,
+        active_fragments=(_StubFragment(fragment_id="strength", weekly_tss=90),),
+        phase_tss_upper=600.0,
+    )
+    assert [v for v in rules.validate_week(ctx) if v.rule_id == "R-20"] == []
