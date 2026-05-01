@@ -438,6 +438,93 @@ def test_run_only_lthr_used_when_bike_lacks_it(tmp_path: Path):
 # ---------------------------------------------------------------------------
 
 
+def test_swim_threshold_pace_zero_treated_as_unset(tmp_path: Path):
+    p = _seed_profile(tmp_path)
+    result = init_profile(
+        config=_config(),
+        root=tmp_path,
+        prompt_gaps=False,
+        today=_date(2026, 4, 30),
+        fetch_facts=lambda c: _facts(swim_threshold_pace=0.0),
+    )
+    doc = yaml.safe_load(p.read_text())
+    # Stub value (None / blank) preserved, NOT overwritten with 0:00/100m garbage.
+    assert doc["thresholds"]["swim_css_pace"]["value"] in (None, "", "TODO")
+    skip = next(
+        u for u in result.updates
+        if u.path == "thresholds.swim_css_pace" and u.action == "skipped_unset_sentinel"
+    )
+    assert "sec/100m" in skip.note
+    assert "30 sec/100m floor" in skip.note
+
+
+def test_swim_threshold_pace_one_treated_as_unset(tmp_path: Path):
+    p = _seed_profile(tmp_path)
+    result = init_profile(
+        config=_config(),
+        root=tmp_path,
+        prompt_gaps=False,
+        today=_date(2026, 4, 30),
+        fetch_facts=lambda c: _facts(swim_threshold_pace=1.0),
+    )
+    doc = yaml.safe_load(p.read_text())
+    assert doc["thresholds"]["swim_css_pace"]["value"] in (None, "", "TODO")
+    rows = render_summary_rows(result)
+    skip_rows = [r for r in rows if r[0] == "skipped" and r[1] == "thresholds.swim_css_pace"]
+    assert skip_rows, "summary should surface the swim sentinel skip"
+    assert "skipped — intervals returned unset sentinel" in skip_rows[0][2]
+
+
+def test_swim_threshold_pace_five_treated_as_unset_and_existing_preserved(tmp_path: Path):
+    # Pre-populated profile with a real CSS pace must not be clobbered when
+    # intervals comes back with a tiny sentinel value.
+    p = _seed_profile(tmp_path, _FILLED_PROFILE)
+    init_profile(
+        config=_config(),
+        root=tmp_path,
+        prompt_gaps=False,
+        today=_date(2026, 4, 30),
+        fetch_facts=lambda c: _facts(swim_threshold_pace=5.0),
+    )
+    doc = yaml.safe_load(p.read_text())
+    assert doc["thresholds"]["swim_css_pace"]["value"] == "1:30/100m"
+    assert doc["thresholds"]["swim_css_pace"]["source"] == "field_test"
+
+
+def test_swim_threshold_pace_realistic_value_populated(tmp_path: Path):
+    p = _seed_profile(tmp_path)
+    init_profile(
+        config=_config(),
+        root=tmp_path,
+        prompt_gaps=False,
+        today=_date(2026, 4, 30),
+        fetch_facts=lambda c: _facts(swim_threshold_pace=95.0),
+    )
+    doc = yaml.safe_load(p.read_text())
+    # 95 sec/100m → 1:35/100m, well above the 30 sec/100m floor.
+    assert doc["thresholds"]["swim_css_pace"]["value"] == "1:35/100m"
+    assert doc["thresholds"]["swim_css_pace"]["source"] == "intervals_import"
+
+
+def test_run_threshold_pace_sentinel_skipped(tmp_path: Path):
+    # Defensive: if intervals ever returns a tiny run threshold pace, treat
+    # it the same way as the swim case — don't write garbage.
+    p = _seed_profile(tmp_path)
+    result = init_profile(
+        config=_config(),
+        root=tmp_path,
+        prompt_gaps=False,
+        today=_date(2026, 4, 30),
+        fetch_facts=lambda c: _facts(run_threshold_pace=1.0),
+    )
+    doc = yaml.safe_load(p.read_text())
+    assert doc["thresholds"]["run_threshold_pace"]["value"] in (None, "", "TODO")
+    assert any(
+        u.path == "thresholds.run_threshold_pace" and u.action == "skipped_unset_sentinel"
+        for u in result.updates
+    )
+
+
 def test_custom_zones_preserved_without_force(tmp_path: Path):
     custom = _STUB_PROFILE.replace(
         "z2_endurance: [56, 75]", "z2_endurance: [60, 80]"
