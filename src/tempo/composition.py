@@ -35,7 +35,7 @@ What's deliberately *not* yet here:
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import date, timedelta
 from pathlib import Path
 from typing import Any, Literal
@@ -79,13 +79,26 @@ class ComposedPhase:
 
 @dataclass
 class PhaseChain:
-    """A composed chain with origin metadata."""
+    """A composed chain with origin metadata.
+
+    ``active_fragments`` carries any goal-research sub-program fragments
+    loaded from ``plans/<plan-id>/fragments/`` at compose time. They live on
+    the chain (not inside phases) because a fragment is a sub-program that
+    runs alongside the macro phases — a 6-week strength block doesn't belong
+    inside a phase's immutable ``key_sessions`` tuple. ``plan-training-week``
+    reads them when drafting a week, and R-20 budgets them against the
+    phase's TSS target.
+    """
 
     template_id: str | None
     distance: str | None
     sport_focus: dict[str, float]
     phases: list[ComposedPhase]
     pre_block_origin: str = ""  # short note when an injury-driven preblock was prepended
+    # Typed as list[Any] to avoid a hard import of fragments.py at module load
+    # — composition stays importable in environments that don't have fragments
+    # populated. Concrete type is ``list[tempo.fragments.PlanFragment]``.
+    active_fragments: list[Any] = field(default_factory=list)
 
     @property
     def total_weeks(self) -> int:
@@ -536,6 +549,8 @@ def compose_chain(
     requires_taper: bool = True,
     sport_focus_hint: dict[str, float] | None = None,
     active_injury_types: list[str] | None = None,
+    plan_id: str | None = None,
+    today: date | None = None,
     root: Path | None = None,
 ) -> PhaseChain:
     """Compose a phase chain for a goal.
@@ -600,6 +615,26 @@ def compose_chain(
             f"Composed chain failed {len(hard)} HARD rule(s).",
             violations=violations,
         )
+
+    # Goal-research sub-programs land here. They DON'T mutate the phase
+    # chain (the macro plan stays the anchor); they ride along on the
+    # PhaseChain so plan-training-week and R-20 can see them. We import
+    # locally to avoid a circular import — fragments.py reads sources but
+    # doesn't depend on composition, but composition imports goals.py at
+    # function-call time too, so we keep the same pattern.
+    if plan_id:
+        from . import fragments as _fragments
+
+        try:
+            chain.active_fragments = _fragments.load_active_fragments(
+                plan_id, on=today, root=root
+            )
+        except _fragments.FragmentSchemaError:
+            # Re-raise as CompositionError so callers get one error type to
+            # handle. A schema-invalid fragment is a deliberate authoring
+            # bug — surfaced, not silently dropped.
+            raise
+
     return chain
 
 
@@ -671,6 +706,7 @@ def compose_for_goal(
     runway_weeks_override: int | None = None,
     active_injury_types: list[str] | None = None,
     multi_a: bool = False,
+    plan_id: str | None = None,
     root: Path | None = None,
 ) -> PhaseChain:
     """Compose a phase chain anchored on a typed :class:`tempo.goals.Goal`.
@@ -760,6 +796,8 @@ def compose_for_goal(
         has_target_date=goal.target_date is not None,
         requires_taper=is_race,
         active_injury_types=active_injury_types,
+        plan_id=plan_id,
+        today=today_d,
         root=root,
     )
 

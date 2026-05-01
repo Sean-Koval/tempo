@@ -662,3 +662,113 @@ def test_multi_a_b_race_nearby_does_not_trigger(tmp_path, monkeypatch) -> None:
     goal = goals.from_match(match)
     chain = composition.compose_for_goal(goal, today=date(2026, 4, 1))
     assert chain.phases[-1].id == "taper_run"
+
+
+# --- Fragment hook (tempo-0e3) -------------------------------------------
+
+
+def _seed_minimal_plan_fragment(tmp_path, *, fragment_id, archetype, target_tss=22,
+                                 cadence=2, created="2026-04-30", expires="2026-12-31"):
+    import yaml as _yaml
+    fdir = tmp_path / "plans" / "p1" / "fragments"
+    fdir.mkdir(parents=True, exist_ok=True)
+    body = {
+        "fragment_id": fragment_id,
+        "goal": "test fragment",
+        "kind": "training",
+        "created_at": created,
+        "re_evaluate_after": expires,
+        "duration_weeks": 8,
+        "sessions": [
+            {"archetype": archetype, "cadence_per_week": cadence, "target_tss": target_tss}
+        ],
+    }
+    (fdir / f"{fragment_id}.yaml").write_text(_yaml.safe_dump(body), encoding="utf-8")
+
+
+def _copy_methodology(tmp_path) -> None:
+    """Copy phases.yaml + session-library so compose_chain works under tmp_path."""
+    import shutil
+
+    from tempo.paths import repo_root as _repo_root
+
+    src = _repo_root() / "knowledge" / "methodology"
+    dst = tmp_path / "knowledge" / "methodology"
+    dst.mkdir(parents=True, exist_ok=True)
+    shutil.copytree(src, dst, dirs_exist_ok=True)
+
+
+def test_compose_chain_loads_active_fragments_for_plan(tmp_path) -> None:
+    _copy_methodology(tmp_path)
+    _seed_minimal_plan_fragment(
+        tmp_path,
+        fragment_id="stronger-legs",
+        archetype="strength_intensification_block",
+    )
+    chain = composition.compose_chain(
+        distance="half_ironman",
+        runway_weeks=16,
+        plan_id="p1",
+        today=date(2026, 5, 15),
+        root=tmp_path,
+    )
+    ids = [f.fragment_id for f in chain.active_fragments]
+    assert ids == ["stronger-legs"]
+
+
+def test_compose_chain_omits_expired_fragments(tmp_path) -> None:
+    _copy_methodology(tmp_path)
+    _seed_minimal_plan_fragment(
+        tmp_path,
+        fragment_id="old-block",
+        archetype="strength_intensification_block",
+        created="2025-01-01",
+        expires="2025-03-01",
+    )
+    chain = composition.compose_chain(
+        distance="half_ironman",
+        runway_weeks=16,
+        plan_id="p1",
+        today=date(2026, 5, 15),
+        root=tmp_path,
+    )
+    assert chain.active_fragments == []
+
+
+def test_compose_chain_without_plan_id_loads_no_fragments(tmp_path) -> None:
+    _copy_methodology(tmp_path)
+    _seed_minimal_plan_fragment(
+        tmp_path,
+        fragment_id="stronger-legs",
+        archetype="strength_intensification_block",
+    )
+    chain = composition.compose_chain(
+        distance="half_ironman",
+        runway_weeks=16,
+        # no plan_id → no fragment loading at all (back-compat for callers
+        # that don't have a plan context yet).
+        today=date(2026, 5, 15),
+        root=tmp_path,
+    )
+    assert chain.active_fragments == []
+
+
+def test_compose_chain_propagates_unknown_archetype_error(tmp_path) -> None:
+    """A fragment referencing a non-existent archetype is a hard error,
+    not a silent skip — easier to debug at compose time than later."""
+    from tempo import fragments as _frag
+
+    _copy_methodology(tmp_path)
+    _seed_minimal_plan_fragment(
+        tmp_path,
+        fragment_id="bad-frag",
+        archetype="not_a_real_archetype",
+    )
+    with pytest.raises(_frag.FragmentSchemaError):
+        composition.compose_chain(
+            distance="half_ironman",
+            runway_weeks=16,
+            plan_id="p1",
+            today=date(2026, 5, 15),
+            root=tmp_path,
+        )
