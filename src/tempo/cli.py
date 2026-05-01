@@ -456,6 +456,86 @@ def init_profile_cmd(
         console.print("[dim]No file changes.[/dim]")
 
 
+@app.command("refresh-prs")
+def refresh_prs_cmd(
+    force_from_activities: bool = typer.Option(
+        False,
+        "--force-from-activities",
+        help="Overwrite manual PRs even when they're faster than activity history can prove.",
+    ),
+    dry_run: bool = typer.Option(
+        False,
+        "--dry-run",
+        help="Compute the diff and print the summary, but don't write to athlete/profile.yaml.",
+    ),
+) -> None:
+    """Derive PRs from synced intervals activities → athlete/profile.yaml.
+
+    Reads the ``activities`` table populated by ``coach sync`` and writes
+    the best whole-activity match per standard distance back to
+    ``athlete/profile.yaml`` with provenance under ``prs_meta``. By
+    default, manual PRs that are faster than what the activity corpus can
+    prove survive — pass ``--force-from-activities`` to overwrite them.
+    Re-running with no new activities is a byte-identical no-op.
+
+    Bike PR derivation is heuristic (whole-activity NP filtered by
+    duration window + intensity factor) and will be replaced by
+    stream-based best-window extraction in a follow-up.
+    """
+    from .refresh_prs import refresh_prs, render_summary_rows
+
+    try:
+        result = refresh_prs(force=force_from_activities, dry_run=dry_run)
+    except Exception as e:
+        console.print(f"[red]refresh-prs failed:[/red] {e}")
+        raise typer.Exit(code=1) from e
+
+    if result.no_activities:
+        console.print(
+            "[yellow]No activities in coach.db[/yellow] — run [bold]coach sync[/bold] first."
+        )
+        raise typer.Exit(code=2)
+
+    rows = render_summary_rows(result)
+    if not rows:
+        console.print("[dim]No PR slots evaluated — nothing to do.[/dim]")
+        return
+
+    table = Table(
+        title=f"refresh-prs — {result.activities_considered} activities → {result.profile_path}",
+        show_header=True,
+        header_style="bold",
+    )
+    for col in ("Status", "Distance", "Value", "Source", "Note"):
+        table.add_column(col)
+    badge = {
+        "set": "[green]set[/green]",
+        "improved": "[green]improved[/green]",
+        "kept": "[dim]kept[/dim]",
+        "kept (manual faster)": "[yellow]kept (manual faster)[/yellow]",
+        "no data": "[dim]no data[/dim]",
+    }
+    for status, key, value, source, note in rows:
+        table.add_row(badge.get(status, status), key, value, source, note)
+    console.print(table)
+
+    improved = result.improved()
+    manual_kept = result.manual_kept()
+    if dry_run:
+        console.print(
+            f"[dim]dry-run[/dim] — would update {len(improved)} PR(s); "
+            f"{len(manual_kept)} manual PR(s) would survive."
+        )
+    elif result.changed:
+        console.print(
+            f"[green]wrote[/green] {result.profile_path} — "
+            f"{len(improved)} PR(s) updated, "
+            f"{len(manual_kept)} manual PR(s) preserved."
+        )
+    else:
+        console.print("[dim]No file changes — already current.[/dim]")
+
+
 @app.command("doctor")
 def doctor_cmd() -> None:
     """Run preflight checks against intervals.icu, coach.db, vectors, plans.
