@@ -1,0 +1,32 @@
+# Frozen snapshot of the goal at plan creation time. If the source in
+# athlete/goals.yaml changes later, re-running bootstrap-plan picks up the
+# change and appends a changelog entry.
+
+id: 2026-bike-build-12wk
+type: performance_target
+metric: ftp_w
+current: 250
+target: 280              # +12% in 12 weeks; aggressive but achievable with structured build + BSI-forced cycling focus
+by_date: 2026-07-24      # 12 weeks from 2026-05-01
+constraints:
+  weekly_hours_max: 12
+  sport_focus: bike       # run paused (BSI); swim re-enters ~2026-06-06
+  strength_touches_min: 4 # per athlete/strength-program.md
+  bsi_protocol: |
+    Left tibia BSI g2 active. NO RUN until medical clearance (~2026-06-06).
+    From 2026-06-06: walk-jog return-to-run protocol if cleared.
+    From mid-June: swim can re-enter with technique focus.
+    Standing climbs OK on bike if pain-free; avoid sustained OOS on rough terrain.
+notes: |
+  Bike-led 12-week build through BSI recovery. Phase shape: Base (4 wk: aerobic
+  capacity + Z2 long-ride scaling 90 min → 3 hr) → Build1 (4 wk: sweet-spot +
+  threshold) → Build2 (3 wk: VO2 + threshold consolidation) → Test/Deload (1 wk:
+  fresh + FTP test).
+
+  Aligns with the 2027 half IM A-race build — this *is* the bike base for it.
+  Strength program (athlete/strength-program.md) continues throughout, gated by
+  BSI rehab progression on the left calf.
+
+  Re-evaluate at week 6 (mid-block) for FTP trajectory + BSI status. If BSI
+  cleared by 2026-06-06 and walk-jog tolerated, weeks 7-12 can fold in 2-3
+  easy run touches/week without disturbing the FTP target.

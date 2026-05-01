@@ -1,0 +1,115 @@
+# 12-week bike-led FTP build through BSI recovery.
+# Compressed from the 16-week ftp_target_16wk template (see rationale.md §3).
+# Phase intensity_distribution / sport_focus / key_sessions copied from
+# composition.compose_for_goal output (composer-vetted against decision-rules).
+
+plan_id: 2026-bike-build-12wk
+goal_ref: 2026-bike-build-12wk         # → athlete/goals.yaml entry
+template: ftp_target_16wk              # source template; compressed to 12 weeks
+template_compression_pct: 25           # 16 → 12 weeks (above 20% silent floor — flagged)
+start_date: 2026-05-04                 # Monday W19
+target_date: 2026-07-24                # Friday W30 — FTP test day
+total_weeks: 12
+weekly_hours_budget: 12                # from athlete/preferences.md
+
+# CTL trajectory (current 28; low base — ramp conservatively).
+# Target peak CTL ~50-55 by end of W29 (≈ +2/wk).
+# These are the *upper* envelope; per-week TSS gets resolved by plan-training-week.
+ctl_trajectory:
+  start: 28
+  peak_target: 52                      # W29 (last build week before deload)
+  test_week_target: 45                 # W30 — freshness > peak
+
+phases:
+  - id: base_aerobic
+    start_week: 2026-W19
+    weeks: 4
+    purpose: |
+      Aerobic capacity, force, durability. Long-ride scaling 90 min → 3 hr.
+      No threshold work yet — the engine has to be there before sharpening.
+    weekly_tss_target: [380, 460]      # ramping; W22 = recovery (320)
+    intensity_distribution: { z1_z2: 85, z3: 10, z4_plus: 5 }
+    sport_focus: { bike: 0.80, strength: 0.20 }
+    key_sessions:
+      - long_ride_z2                   # Sat — scaling 90 → 180 min
+      - tempo_bike_block               # Tue (W19-21) — Sweet Spot Builder S3
+      - cadence_neuromuscular_bike     # Thu — S4 (low TSS, neural focus)
+      - easy_aerobic_ride              # Sun recovery — S6
+      - strength_foundation            # 4× per week per athlete/strength-program.md
+    recovery_week: W22                 # 3:1 cadence per R-15
+
+  - id: ftp_progression
+    start_week: 2026-W23
+    weeks: 4
+    purpose: |
+      Sweet-spot accumulation → threshold introduction. The "raise the floor"
+      block. Long ride continues scaling toward 3.5 hr with race-pace surges.
+    weekly_tss_target: [500, 620]      # W26 = recovery (380)
+    intensity_distribution: { z1_z2: 65, z3: 25, z4_plus: 10 }
+    sport_focus: { bike: 0.85, strength: 0.15 }
+    key_sessions:
+      - sweet_spot_4x8                 # Tue — S3 progression Block 1
+      - sweet_spot_3x15                # Tue — Block 2 (later weeks)
+      - threshold_2x20                 # Thu — S1 Threshold Ladder evolves into this
+      - long_ride_z2                   # Sat — 3.0–3.5 hr with 2×20 Z3 inserts
+      - recovery_spin                  # Sun — S6
+      - strength_program               # ~3 full + 1 mini, gated by BSI calf rehab
+    recovery_week: W26
+
+  - id: vo2_polarisation
+    start_week: 2026-W27
+    weeks: 3
+    purpose: |
+      VO2max ceiling raise + threshold consolidation. Lowest training stress
+      ratio of any phase — high intensity demands high recovery.
+    weekly_tss_target: [550, 660]      # W29 starts pre-deload taper
+    intensity_distribution: { z1_z2: 80, z3: 5, z4_plus: 15 }
+    sport_focus: { bike: 0.85, strength: 0.15 }
+    key_sessions:
+      - vo2_5x3                        # Tue W27 — S2 VO2 Intervals
+      - vo2_4x4                        # Tue W28
+      - vo2_3x5                        # Tue W29 (longer reps, lower RPE)
+      - threshold_2x20                 # Thu — maintenance
+      - long_ride_z2                   # Sat — 3.5–4 hr with race-pace blocks
+      - easy_aerobic_ride              # Sun
+
+  - id: deload_test
+    start_week: 2026-W30
+    weeks: 1
+    purpose: |
+      Freshen + measure. Cut volume ~50%, keep brief intensity primers,
+      land FTP test on Fri 2026-07-24.
+    weekly_tss_target: [250, 320]
+    intensity_distribution: { z1_z2: 80, z3: 10, z4_plus: 10 }
+    sport_focus: { bike: 0.70, strength: 0.20, recovery: 0.10 }
+    key_sessions:
+      - easy_spin                      # Mon, Wed — primer + freshness
+      - ftp_test_20min                 # Fri 2026-07-24 — the test
+      - recovery_spin                  # Sun — depending on test result
+    test_day: 2026-07-24               # ftp_test_20min — the goal verification
+
+milestones:
+  - week_id: 2026-W22
+    kind: review
+    note: "Phase 1 review — base capacity check; long-ride at 3 hr cleanly?"
+  - week_id: 2026-W23
+    kind: bsi_recheck
+    note: "BSI medical recheck due ~2026-06-06; if cleared, walk-jog protocol can begin in W23-W24 without disrupting bike build"
+  - week_id: 2026-W26
+    kind: review
+    note: "Mid-block review — FTP trajectory check (e.g., target 270W achievable in W30?)"
+  - week_id: 2026-W30
+    kind: test
+    note: "FTP test day 2026-07-24 — goal verification (target 280W, +12% from 250)"
+
+# Run + swim re-entry plan (post-BSI clearance, currently null).
+# These get folded in by plan-training-week if/when the medical recheck clears them.
+sport_reentry_protocol:
+  run:
+    earliest_start_week: 2026-W23      # post-BSI recheck (~2026-06-06)
+    protocol: walk-jog return-to-run; volume capped at 60 min/wk in W23-W26
+    constraint: must not displace bike key sessions; lands on Wed or Sat-PM only
+  swim:
+    earliest_start_week: 2026-W24
+    protocol: technique-only first 2 weeks; CSS test at end of W26
+    constraint: 2 sessions/wk max; slot Wed AM + Fri AM (no impact on bike days)
