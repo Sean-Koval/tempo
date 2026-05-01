@@ -80,6 +80,43 @@ def main() -> None:
     app()
 
 
+@app.command("init")
+def init_cmd(
+    resume: bool = typer.Option(
+        False,
+        "--resume",
+        help="Skip already-complete sections and pick up at the first incomplete one.",
+    ),
+    validate_only: bool = typer.Option(
+        False,
+        "--validate-only",
+        help="Print a per-section completeness table and exit non-zero if any section is incomplete. CI-friendly; never prompts.",
+    ),
+    sync_days: int = typer.Option(
+        90,
+        "--sync-days",
+        help="Days of history to backfill in the sync section.",
+    ),
+) -> None:
+    """Guided onboarding — profile, race/goal, preferences, injury, creds, sync, status.
+
+    Safe to re-run: ``--resume`` skips sections whose completeness markers
+    are already satisfied. ``--validate-only`` runs the same checks
+    without prompting and exits non-zero if any section is incomplete
+    (suitable for CI gating).
+    """
+    from .init_wizard import WizardOptions, run_wizard
+
+    opts = WizardOptions(
+        resume=resume,
+        validate_only=validate_only,
+        sync_days=sync_days,
+    )
+    _, code = run_wizard(options=opts)
+    if code != 0:
+        raise typer.Exit(code=code)
+
+
 @app.command("sync")
 def sync_cmd(
     days: int = typer.Option(90, "--days", help="Window size in days back from today."),
