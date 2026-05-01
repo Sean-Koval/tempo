@@ -60,6 +60,13 @@ _BIKE_TYPES = {"Ride", "VirtualRide", "GravelRide", "MountainBikeRide"}
 _RUN_TYPES = {"Run", "TrailRun", "VirtualRun"}
 _SWIM_TYPES = {"Swim"}
 
+# Floors that distinguish intervals' unset/sentinel pace values (often 0
+# or 1) from real configured ones. World-record 50m freestyle is ~21s/100m
+# for a single 50, so sustained sub-30s/100m is implausible. 2 min/km is
+# faster than world-record marathon pace.
+_SWIM_PACE_SANITY_FLOOR_SEC_PER_100M = 30.0
+_RUN_PACE_SANITY_FLOOR_MIN_PER_KM = 2.0
+
 
 # ---------------------------------------------------------------------------
 # Result types
@@ -71,9 +78,10 @@ class FieldUpdate:
     """One field that init_profile populated, skipped, or left alone."""
 
     path: str  # dotted path inside profile.yaml, e.g. "thresholds.ftp_w"
-    action: str  # "populated" | "skipped_existing" | "overwritten" | "prompted" | "no_data"
+    action: str  # "populated" | "skipped_existing" | "overwritten" | "prompted" | "no_data" | "skipped_unset_sentinel"
     value: Any = None
     source: str = ""  # e.g. "intervals_import", "manual", "default"
+    note: str = ""  # human-readable detail (e.g. why a value was skipped)
 
 
 @dataclass(slots=True)
@@ -420,26 +428,56 @@ def _apply_intervals_facts(
             force=force,
             updates=updates,
         )
-    if facts.run_threshold_pace:
-        _set_threshold(
-            profile,
-            key="run_threshold_pace",
-            value=_format_run_pace(facts.run_threshold_pace),
-            source_ref=source_ref,
-            today_iso=today_iso,
-            force=force,
-            updates=updates,
-        )
-    if facts.swim_threshold_pace:
-        _set_threshold(
-            profile,
-            key="swim_css_pace",
-            value=_format_swim_pace(facts.swim_threshold_pace),
-            source_ref=source_ref,
-            today_iso=today_iso,
-            force=force,
-            updates=updates,
-        )
+    if facts.run_threshold_pace is not None:
+        if facts.run_threshold_pace < _RUN_PACE_SANITY_FLOOR_MIN_PER_KM:
+            updates.append(
+                FieldUpdate(
+                    path="thresholds.run_threshold_pace",
+                    action="skipped_unset_sentinel",
+                    value=facts.run_threshold_pace,
+                    source="intervals_import",
+                    note=(
+                        f"intervals returned unset sentinel "
+                        f"(got {facts.run_threshold_pace} min/km, "
+                        f"< {_RUN_PACE_SANITY_FLOOR_MIN_PER_KM} min/km floor)"
+                    ),
+                )
+            )
+        else:
+            _set_threshold(
+                profile,
+                key="run_threshold_pace",
+                value=_format_run_pace(facts.run_threshold_pace),
+                source_ref=source_ref,
+                today_iso=today_iso,
+                force=force,
+                updates=updates,
+            )
+    if facts.swim_threshold_pace is not None:
+        if facts.swim_threshold_pace < _SWIM_PACE_SANITY_FLOOR_SEC_PER_100M:
+            updates.append(
+                FieldUpdate(
+                    path="thresholds.swim_css_pace",
+                    action="skipped_unset_sentinel",
+                    value=facts.swim_threshold_pace,
+                    source="intervals_import",
+                    note=(
+                        f"intervals returned unset sentinel "
+                        f"(got {facts.swim_threshold_pace} sec/100m, "
+                        f"< {_SWIM_PACE_SANITY_FLOOR_SEC_PER_100M:.0f} sec/100m floor)"
+                    ),
+                )
+            )
+        else:
+            _set_threshold(
+                profile,
+                key="swim_css_pace",
+                value=_format_swim_pace(facts.swim_threshold_pace),
+                source_ref=source_ref,
+                today_iso=today_iso,
+                force=force,
+                updates=updates,
+            )
 
     bike_zones = _zones_from_pct_cutoffs(
         facts.bike_power_zones or [], facts.bike_ftp, list(_DEFAULT_BIKE_POWER_ZONES.keys())
@@ -667,6 +705,9 @@ def render_summary_rows(result: InitProfileResult) -> list[tuple[str, str, str, 
             rows.append(("force", u.path, _format_value(u.value), u.source or "—"))
         elif u.action == "prompted":
             rows.append(("manual", u.path, _format_value(u.value), "prompt"))
+        elif u.action == "skipped_unset_sentinel":
+            detail = u.note or f"intervals sentinel ({_format_value(u.value)})"
+            rows.append(("skipped", u.path, f"skipped — {detail}", u.source or "—"))
     return rows
 
 
