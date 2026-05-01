@@ -489,11 +489,13 @@ def _stretch_or_compress_to_runway(chain: PhaseChain, runway_weeks: int) -> None
         return
 
     # Pick the phase with the largest duration_range slack — usually a base
-    # phase. Prefer base_* phases over peak/taper.
+    # phase. Prefer base_* / rehab_* / adventure_prep over peak/taper.
     candidates = [
         (i, p)
         for i, p in enumerate(chain.phases)
-        if p.id.startswith("base") or p.id.startswith("rehab")
+        if p.id.startswith("base")
+        or p.id.startswith("rehab")
+        or p.id == "adventure_prep_block"
     ]
     if not candidates:
         return
@@ -619,6 +621,13 @@ _DEFAULT_RUNWAY_BY_DISTANCE: dict[str, int] = {
     "strength_peak": 12,
     "base_building": 8,
     "rolling_base_block": 12,
+    # Streak/adventure defaults match the canonical template length so
+    # an open-ended (no by_date) streak/adventure composes without
+    # stretching the block past its conservative ramp.
+    "streak_30day": 5,
+    "streak_100day": 15,
+    "adventure_hike": 4,
+    "adventure_ride": 8,
 }
 
 
@@ -681,9 +690,11 @@ def compose_for_goal(
     - ``performance_target`` -> metric maps to a synthetic distance
       (ftp_target, css_target, strength_peak); chain ends in deload_test.
     - ``maintenance`` -> base_building (dated) or rolling_base_block (open).
-    - ``streak`` / ``adventure`` -> :class:`CompositionError` (clear
-      "not supported by composer yet" — these need different anchoring
-      and will land in follow-up tickets).
+    - ``streak`` -> count-based ``streak_block`` template (no taper, no
+      periodisation peak; injury-resistance is the dominant constraint).
+    - ``adventure`` -> ``adventure_prep_block`` + final 3wk
+      ``adventure_simulation_block`` (terrain + nutrition rehearsal,
+      no taper).
 
     Runway is computed from ``today`` to ``goal.target_date``; an override
     is allowed for tests and for non-dated goals where the default
