@@ -505,3 +505,160 @@ def test_supported_perf_metrics_listed_for_introspection() -> None:
     assert "ftp_w" in goals.SUPPORTED_PERF_METRICS
     assert "squat_1rm_kg" in goals.SUPPORTED_PERF_METRICS
     assert "css_pace_s_per_100m" in goals.SUPPORTED_PERF_METRICS
+
+
+# --- Multi-A guardrail (tempo-wk7) ----------------------------------------
+
+
+def _seed_race_calendar(tmp_path, races: list[dict]) -> None:
+    """Helper for multi-A tests: write a races yaml under tmp_path/athlete/."""
+    import yaml as _y
+
+    (tmp_path / "athlete").mkdir(exist_ok=True)
+    (tmp_path / "athlete" / "race-calendar.yaml").write_text(
+        _y.safe_dump({"races": races}, sort_keys=False),
+        encoding="utf-8",
+    )
+
+
+def test_multi_a_within_4wk_raises_without_flag(tmp_path, monkeypatch) -> None:
+    """Acceptance: two confirmed A-races within 4 weeks raise CompositionError."""
+    from tempo import athlete as athlete_mod
+
+    monkeypatch.setattr(athlete_mod, "repo_root", lambda: tmp_path)
+    _seed_race_calendar(
+        tmp_path,
+        [
+            {"id": "primary-a", "date": "2026-09-01", "distance": "marathon", "priority": "A"},
+            {"id": "second-a", "date": "2026-09-22", "distance": "marathon", "priority": "A"},
+        ],
+    )
+
+    match = goals.athlete.GoalMatch(
+        kind="race",
+        data={
+            "id": "primary-a",
+            "date": "2026-09-01",
+            "distance": "marathon",
+            "priority": "A",
+            "status": "confirmed",
+        },
+    )
+    goal = goals.from_match(match)
+    with pytest.raises(composition.CompositionError, match="multi_a") as exc_info:
+        composition.compose_for_goal(goal, today=date(2026, 4, 1), root=tmp_path)
+    assert any(v.rule_id == "multi_a_within_window" for v in exc_info.value.violations)
+
+
+def test_multi_a_within_8wk_raises_without_flag(tmp_path, monkeypatch) -> None:
+    """Scope says 8wk window — 6wk separation still trips the guardrail."""
+    from tempo import athlete as athlete_mod
+
+    monkeypatch.setattr(athlete_mod, "repo_root", lambda: tmp_path)
+    _seed_race_calendar(
+        tmp_path,
+        [
+            {"id": "primary-a", "date": "2026-09-01", "distance": "marathon", "priority": "A"},
+            {"id": "second-a", "date": "2026-10-13", "distance": "marathon", "priority": "A"},
+        ],
+    )
+    match = goals.athlete.GoalMatch(
+        kind="race",
+        data={"id": "primary-a", "date": "2026-09-01", "distance": "marathon", "priority": "A"},
+    )
+    goal = goals.from_match(match)
+    with pytest.raises(composition.CompositionError):
+        composition.compose_for_goal(goal, today=date(2026, 4, 1), root=tmp_path)
+
+
+def test_multi_a_outside_window_does_not_trigger(tmp_path, monkeypatch) -> None:
+    """A-races more than 8wk apart compose normally without the flag."""
+    from tempo import athlete as athlete_mod
+
+    monkeypatch.setattr(athlete_mod, "repo_root", lambda: tmp_path)
+    _seed_race_calendar(
+        tmp_path,
+        [
+            {"id": "primary-a", "date": "2026-09-01", "distance": "marathon", "priority": "A"},
+            {"id": "later-a", "date": "2027-01-01", "distance": "marathon", "priority": "A"},
+        ],
+    )
+    match = goals.athlete.GoalMatch(
+        kind="race",
+        data={"id": "primary-a", "date": "2026-09-01", "distance": "marathon", "priority": "A"},
+    )
+    goal = goals.from_match(match)
+    chain = composition.compose_for_goal(goal, today=date(2026, 4, 1))
+    assert chain.phases[-1].id == "taper_run"
+
+
+def test_multi_a_cancelled_race_does_not_trip_guardrail(tmp_path, monkeypatch) -> None:
+    """A nearby A-race that's cancelled is invisible to the guardrail."""
+    from tempo import athlete as athlete_mod
+
+    monkeypatch.setattr(athlete_mod, "repo_root", lambda: tmp_path)
+    _seed_race_calendar(
+        tmp_path,
+        [
+            {"id": "primary-a", "date": "2026-09-01", "distance": "marathon", "priority": "A"},
+            {
+                "id": "ghost-a",
+                "date": "2026-09-22",
+                "distance": "marathon",
+                "priority": "A",
+                "status": "cancelled",
+                "cancelled_reason": "travel conflict",
+            },
+        ],
+    )
+    match = goals.athlete.GoalMatch(
+        kind="race",
+        data={"id": "primary-a", "date": "2026-09-01", "distance": "marathon", "priority": "A"},
+    )
+    goal = goals.from_match(match)
+    chain = composition.compose_for_goal(goal, today=date(2026, 4, 1))
+    assert chain.phases[-1].id == "taper_run"
+
+
+def test_multi_a_flag_opts_into_compose(tmp_path, monkeypatch) -> None:
+    """Passing multi_a=True bypasses the guardrail (single-anchor compose for now)."""
+    from tempo import athlete as athlete_mod
+
+    monkeypatch.setattr(athlete_mod, "repo_root", lambda: tmp_path)
+    _seed_race_calendar(
+        tmp_path,
+        [
+            {"id": "primary-a", "date": "2026-09-01", "distance": "marathon", "priority": "A"},
+            {"id": "second-a", "date": "2026-09-22", "distance": "marathon", "priority": "A"},
+        ],
+    )
+    match = goals.athlete.GoalMatch(
+        kind="race",
+        data={"id": "primary-a", "date": "2026-09-01", "distance": "marathon", "priority": "A"},
+    )
+    goal = goals.from_match(match)
+    chain = composition.compose_for_goal(
+        goal, today=date(2026, 4, 1), multi_a=True
+    )
+    assert chain.phases[-1].id == "taper_run"
+
+
+def test_multi_a_b_race_nearby_does_not_trigger(tmp_path, monkeypatch) -> None:
+    """Only A-vs-A collisions are guarded; nearby B-races are fine."""
+    from tempo import athlete as athlete_mod
+
+    monkeypatch.setattr(athlete_mod, "repo_root", lambda: tmp_path)
+    _seed_race_calendar(
+        tmp_path,
+        [
+            {"id": "primary-a", "date": "2026-09-01", "distance": "marathon", "priority": "A"},
+            {"id": "tune-up-b", "date": "2026-08-15", "distance": "10k", "priority": "B"},
+        ],
+    )
+    match = goals.athlete.GoalMatch(
+        kind="race",
+        data={"id": "primary-a", "date": "2026-09-01", "distance": "marathon", "priority": "A"},
+    )
+    goal = goals.from_match(match)
+    chain = composition.compose_for_goal(goal, today=date(2026, 4, 1))
+    assert chain.phases[-1].id == "taper_run"

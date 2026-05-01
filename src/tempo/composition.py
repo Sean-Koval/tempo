@@ -36,7 +36,7 @@ What's deliberately *not* yet here:
 from __future__ import annotations
 
 from dataclasses import dataclass
-from datetime import date
+from datetime import date, timedelta
 from pathlib import Path
 from typing import Any, Literal
 
@@ -622,12 +622,55 @@ _DEFAULT_RUNWAY_BY_DISTANCE: dict[str, int] = {
 }
 
 
+_MULTI_A_WINDOW_WEEKS = 8
+
+
+def _confirmed_a_races_near(
+    goal_id: str,
+    target_date: date,
+    *,
+    window_weeks: int,
+    root: Path | None,
+) -> list[dict[str, Any]]:
+    """Return confirmed A-races within ``window_weeks`` of ``target_date`` (excluding the goal itself).
+
+    Tempo-wk7 multi-A guardrail. The ticket asks for an explicit error rather
+    than silently picking one peak — the calendar window where two A-races
+    collide forces a coaching tradeoff (sub-peak the second, race-through
+    the first, or split the chain) that's outside the composer's automatic
+    behavior. Multi-A composition itself is deferred (separate ticket).
+    """
+    from . import athlete as _athlete
+
+    horizon = timedelta(weeks=window_weeks)
+    out: list[dict[str, Any]] = []
+    for race in _athlete.load_races(root=root):
+        if race.get("id") == goal_id:
+            continue
+        if (race.get("priority") or "").upper() != "A":
+            continue
+        if race.get("status") != "confirmed":
+            continue
+        rd = race.get("date") or race.get("target_date")
+        if isinstance(rd, str):
+            try:
+                rd = date.fromisoformat(rd)
+            except ValueError:
+                continue
+        if not isinstance(rd, date):
+            continue
+        if abs((rd - target_date).days) <= horizon.days:
+            out.append(race)
+    return out
+
+
 def compose_for_goal(
     goal: _GoalLike,
     *,
     today: date | None = None,
     runway_weeks_override: int | None = None,
     active_injury_types: list[str] | None = None,
+    multi_a: bool = False,
     root: Path | None = None,
 ) -> PhaseChain:
     """Compose a phase chain anchored on a typed :class:`tempo.goals.Goal`.
@@ -655,6 +698,37 @@ def compose_for_goal(
     from .goals import GoalSchemaError, template_distance_for
 
     is_race = goal.type == "race"
+
+    if (
+        is_race
+        and not multi_a
+        and goal.target_date is not None
+        and (goal.priority or "").upper() == "A"
+    ):
+        collisions = _confirmed_a_races_near(
+            goal.id,
+            goal.target_date,
+            window_weeks=_MULTI_A_WINDOW_WEEKS,
+            root=root,
+        )
+        if collisions:
+            ids = [r.get("id") for r in collisions]
+            raise CompositionError(
+                f"goal {goal.id!r} has {len(collisions)} other confirmed A-race(s) "
+                f"({ids}) within {_MULTI_A_WINDOW_WEEKS} weeks of {goal.target_date}. "
+                "Pass multi_a=True (or --multi-a on the CLI) to opt into a "
+                "single-anchor compose; full multi-A handling is deferred.",
+                violations=[
+                    CompositionViolation(
+                        rule_id="multi_a_within_window",
+                        severity="HARD",
+                        message=(
+                            f"colliding confirmed A-race ids: {ids}; "
+                            f"window={_MULTI_A_WINDOW_WEEKS}wk around {goal.target_date}"
+                        ),
+                    )
+                ],
+            )
 
     try:
         distance = template_distance_for(goal)
