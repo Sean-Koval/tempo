@@ -1166,6 +1166,92 @@ def plan_amend_insert_test_cmd(
     _print_amend_result(result, dry_run=dry_run)
 
 
+@week_app.command("import")
+def week_import_cmd(
+    week_id: str = typer.Argument(..., help="ISO week id, e.g. 2026-W19."),
+    plan_id: str = typer.Option(
+        "",
+        "--plan-id",
+        help="Plan id under plans/. Defaults to single auto-detected plan.",
+    ),
+    dry_run: bool = typer.Option(
+        False,
+        "--dry-run",
+        help="Parse + diff against the DB without writing.",
+    ),
+    force: bool = typer.Option(
+        False,
+        "--force",
+        help="Reserved — currently a no-op (UPSERT always wins on diff).",
+    ),
+) -> None:
+    """Parse plans/<plan-id>/weeks/<week_id>.md into sessions_planned.
+
+    Bridges /plan-training-week (markdown) and ``coach push-week``
+    (SQLite). Idempotent — re-running on unchanged markdown is a no-op.
+    push-week-owned columns (pushed_to_intervals, intervals_event_id)
+    are preserved across re-imports.
+    """
+    _ = force  # reserved; UPSERT semantics make conflict prompting moot
+    from .week_import import ImportError as WeekImportError
+    from .week_import import import_week, render_change_rows
+
+    conn = connect()
+    init_schema(conn)
+    try:
+        try:
+            result = import_week(
+                conn,
+                week_id=week_id,
+                plan_id=plan_id or None,
+                dry_run=dry_run,
+            )
+        except WeekImportError as e:
+            console.print(f"[red]{e}[/red]")
+            raise typer.Exit(code=2) from e
+    finally:
+        conn.close()
+
+    table = Table(
+        title=("[DRY RUN] " if dry_run else "")
+        + f"{result.plan_id}/{result.week_id} — {result.n_parsed} sessions",
+        show_header=True,
+        header_style="bold",
+    )
+    for col in ("", "Date", "Sport", "Library", "TSS", "Duration", "Change"):
+        table.add_column(col)
+    badge_color = {"+": "green", "~": "yellow", "=": "dim"}
+    for row in render_change_rows(result):
+        flag = row[0]
+        styled = f"[{badge_color.get(flag, '')}]{flag}[/]" if badge_color.get(flag) else flag
+        table.add_row(styled, *row[1:])
+    console.print(table)
+
+    if dry_run:
+        if result.changed:
+            console.print(
+                f"\n[dim]Dry-run — {result.n_inserted} insert, "
+                f"{result.n_updated} update, {result.n_noop} no-op. "
+                "Re-run without --dry-run to write.[/dim]"
+            )
+        else:
+            console.print(
+                f"\n[green]No changes — DB already matches "
+                f"{result.week_file.name}.[/green]"
+            )
+        return
+
+    if result.changed:
+        console.print(
+            f"\n[green]wrote[/green] {result.n_inserted} insert, "
+            f"{result.n_updated} update, {result.n_noop} no-op."
+        )
+    else:
+        console.print(
+            f"[dim]No changes — DB already matches {result.week_file.name}.[/dim]"
+        )
+
+
 @week_app.command("amend-session")
 def week_amend_session_cmd(
     week_id: str = typer.Argument(..., help="ISO week id, e.g. 2026-W18."),
