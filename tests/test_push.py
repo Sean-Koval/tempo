@@ -433,6 +433,134 @@ def test_planned_session_event_payload_shape():
     assert "Z2 chatty pace" in payload["description"]
 
 
+def test_to_event_payload_attaches_workout_id_when_set():
+    s = PlannedSession(
+        id="s1",
+        plan_id="demo",
+        date="2026-04-27",
+        sport="bike",
+        target_duration_s=3600,
+        target_tss=80,
+        library_ref="tempo_bike_block",
+        intervals_workout_id=42,
+    )
+    payload = s.to_event_payload()
+    assert payload["plan_workout_id"] == 42
+
+
+def test_to_event_payload_omits_workout_id_when_unset():
+    s = PlannedSession(
+        id="s1",
+        plan_id="demo",
+        date="2026-04-27",
+        sport="bike",
+    )
+    payload = s.to_event_payload()
+    assert "plan_workout_id" not in payload
+
+
+def test_load_planned_sessions_attaches_mapped_workout_id(tmp_data_dir: Path):
+    from tempo.db import connect, init_schema
+    from tempo.library_map import upsert_mapping
+    from tempo.push import load_planned_sessions
+
+    c = connect()
+    init_schema(c)
+    upsert_mapping(
+        c,
+        library_ref="tempo_bike_block",
+        intervals_workout_id=42,
+        intervals_name="Tempo block v1",
+        intervals_folder_id=None,
+        sport="bike",
+    )
+    c.execute(
+        "INSERT INTO sessions_planned(id, plan_id, week_id, date, sport, library_ref, "
+        "target_duration_s) VALUES (?, ?, ?, ?, ?, ?, ?)",
+        ("s1", "demo", "2026-W18", "2026-04-27", "bike", "tempo_bike_block", 3600),
+    )
+    c.execute(
+        "INSERT INTO sessions_planned(id, plan_id, week_id, date, sport, library_ref) "
+        "VALUES (?, ?, ?, ?, ?, ?)",
+        ("s2", "demo", "2026-W18", "2026-04-28", "run", "easy_aerobic_run"),
+    )
+    rows = load_planned_sessions(c, week_id="2026-W18")
+    by_id = {r.id: r for r in rows}
+    assert by_id["s1"].intervals_workout_id == 42
+    # Unmapped ref falls back cleanly.
+    assert by_id["s2"].intervals_workout_id is None
+    c.close()
+
+
+@pytest.mark.asyncio
+async def test_push_payload_carries_mapped_workout_id(monkeypatch, fake_config, tmp_data_dir: Path):
+    """End-to-end: a mapping → push sends ``plan_workout_id`` on the event payload."""
+    from tempo.db import connect, init_schema
+    from tempo.library_map import upsert_mapping
+    from tempo.push import load_planned_sessions, push_week_async
+
+    fake = _FakeClient(initial=[])
+    monkeypatch.setattr("tempo.push.ICUClient", lambda cfg: fake)
+
+    c = connect()
+    init_schema(c)
+    upsert_mapping(
+        c,
+        library_ref="tempo_bike_block",
+        intervals_workout_id=42,
+        intervals_name="Tempo block v1",
+        intervals_folder_id=None,
+        sport="bike",
+    )
+    c.execute(
+        "INSERT INTO sessions_planned(id, plan_id, week_id, date, sport, library_ref, "
+        "target_duration_s) VALUES (?, ?, ?, ?, ?, ?, ?)",
+        ("s1", "demo", "2026-W18", "2026-04-27", "bike", "tempo_bike_block", 3600),
+    )
+    planned = load_planned_sessions(c, week_id="2026-W18")
+
+    await push_week_async(
+        config=fake_config,
+        plan_id="demo",
+        week_id="2026-W18",
+        planned=planned,
+        verify=False,
+    )
+
+    assert len(fake.created) == 1
+    assert fake.created[0]["plan_workout_id"] == 42
+    c.close()
+
+
+@pytest.mark.asyncio
+async def test_push_payload_omits_workout_id_when_unmapped(monkeypatch, fake_config, tmp_data_dir: Path):
+    """Fallback path: no mapping → no ``plan_workout_id`` field on the payload."""
+    from tempo.db import connect, init_schema
+    from tempo.push import load_planned_sessions, push_week_async
+
+    fake = _FakeClient(initial=[])
+    monkeypatch.setattr("tempo.push.ICUClient", lambda cfg: fake)
+
+    c = connect()
+    init_schema(c)
+    c.execute(
+        "INSERT INTO sessions_planned(id, plan_id, week_id, date, sport, library_ref, "
+        "target_duration_s) VALUES (?, ?, ?, ?, ?, ?, ?)",
+        ("s1", "demo", "2026-W18", "2026-04-27", "bike", "tempo_bike_block", 3600),
+    )
+    planned = load_planned_sessions(c, week_id="2026-W18")
+    await push_week_async(
+        config=fake_config,
+        plan_id="demo",
+        week_id="2026-W18",
+        planned=planned,
+        verify=False,
+    )
+    assert len(fake.created) == 1
+    assert "plan_workout_id" not in fake.created[0]
+    c.close()
+
+
 @pytest.mark.asyncio
 async def test_push_marks_sessions_pushed(monkeypatch, fake_config, tmp_data_dir: Path):
     """``mark_pushed_conn`` should set pushed_to_intervals + intervals_event_id."""
