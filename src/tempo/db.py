@@ -85,6 +85,17 @@ _TABLES: tuple[str, ...] = (
     )
     """,
     """
+    CREATE TABLE IF NOT EXISTS library_workout_map (
+        library_ref           TEXT PRIMARY KEY,
+        intervals_workout_id  INTEGER NOT NULL,
+        intervals_name        TEXT,
+        intervals_folder_id   INTEGER,
+        sport                 TEXT,
+        last_synced_at        TEXT NOT NULL,
+        notes                 TEXT
+    )
+    """,
+    """
     CREATE TABLE IF NOT EXISTS decisions (
         id              INTEGER PRIMARY KEY AUTOINCREMENT,
         timestamp       TIMESTAMP NOT NULL,
@@ -107,6 +118,7 @@ _INDEXES: tuple[str, ...] = (
     "CREATE INDEX IF NOT EXISTS idx_activities_sport_start ON activities(sport, start_date)",
     "CREATE INDEX IF NOT EXISTS idx_sp_week ON sessions_planned(week_id)",
     "CREATE INDEX IF NOT EXISTS idx_decisions_scope ON decisions(scope)",
+    "CREATE INDEX IF NOT EXISTS idx_lwm_workout_id ON library_workout_map(intervals_workout_id)",
 )
 
 
