@@ -74,6 +74,13 @@ week_app = typer.Typer(
 )
 app.add_typer(week_app)
 
+library_app = typer.Typer(
+    name="library",
+    help="Map Tempo session-library refs to intervals.icu library workouts.",
+    no_args_is_help=True,
+)
+app.add_typer(library_app)
+
 
 def main() -> None:
     """Entry point declared in ``pyproject.toml`` ``[project.scripts]``."""
@@ -250,7 +257,7 @@ def push_week_cmd(
         show_header=True,
         header_style="bold",
     )
-    for col in ("Date", "Sport", "Library", "Target TSS", "Duration", "Purpose"):
+    for col in ("Date", "Sport", "Library", "Target TSS", "Duration", "Workout", "Purpose"):
         table.add_column(col)
     for row in render_session_table_rows(planned):
         table.add_row(*row)
@@ -1404,6 +1411,246 @@ def dashboard_decisions_cmd(
         import webbrowser
 
         webbrowser.open(out.as_uri())
+
+
+@library_app.command("list")
+def library_list_cmd(
+    no_fetch: bool = typer.Option(
+        False,
+        "--no-fetch",
+        help="Skip the intervals.icu round-trip; never flag staleness on this run.",
+    ),
+    from_folder: int = typer.Option(
+        0,
+        "--from-folder",
+        help="Restrict the staleness check to one intervals folder. 0 = all.",
+    ),
+) -> None:
+    """List every session-library ref with its mapping status (mapped/unmapped/stale)."""
+    from .library_map import build_status_rows, fetch_workouts_sync
+
+    conn = connect()
+    init_schema(conn)
+    try:
+        intervals_ids: set[int] | None = None
+        fetch_error: str | None = None
+        if not no_fetch:
+            try:
+                folder = from_folder if from_folder > 0 else None
+                workouts = fetch_workouts_sync(folder_id=folder)
+                intervals_ids = {int(w.id) for w in workouts}
+            except Exception as e:
+                fetch_error = str(e)
+        rows = build_status_rows(conn, intervals_ids=intervals_ids)
+    finally:
+        conn.close()
+
+    if fetch_error:
+        console.print(
+            f"[yellow]Could not fetch intervals workouts — staleness not checked:[/yellow] {fetch_error}"
+        )
+
+    table = Table(title="Session library — mapping status", show_header=True, header_style="bold")
+    for col in ("Status", "Library Ref", "Sport", "Intervals Workout"):
+        table.add_column(col)
+    badge = {
+        "mapped": "[green]mapped[/green]",
+        "unmapped": "[yellow]unmapped[/yellow]",
+        "stale": "[red]stale[/red]",
+    }
+    for r in rows:
+        wkout = ""
+        if r.intervals_workout_id is not None:
+            wkout = f"{r.intervals_workout_id}"
+            if r.intervals_name:
+                wkout += f" — {r.intervals_name}"
+        table.add_row(badge.get(r.status, r.status), r.library_ref, r.sport, wkout or "—")
+    console.print(table)
+
+    summary = {"mapped": 0, "unmapped": 0, "stale": 0}
+    for r in rows:
+        summary[r.status] = summary.get(r.status, 0) + 1
+    console.print(
+        f"[dim]{summary['mapped']} mapped • {summary['unmapped']} unmapped • "
+        f"{summary['stale']} stale[/dim]"
+    )
+
+
+@library_app.command("show")
+def library_show_cmd(
+    library_ref: str = typer.Argument(..., help="Library ref to inspect."),
+) -> None:
+    """Show full mapping details for one library_ref."""
+    from .library_map import find_entry, get_mapping
+
+    entry = find_entry(library_ref)
+    if entry is None:
+        console.print(
+            f"[red]{library_ref!r} is not in the session library.[/red]"
+        )
+        raise typer.Exit(code=2)
+
+    conn = connect()
+    init_schema(conn)
+    try:
+        mapping = get_mapping(conn, library_ref=library_ref)
+    finally:
+        conn.close()
+
+    if mapping is None:
+        console.print(
+            f"[yellow]{library_ref}[/yellow] — not mapped. "
+            "Run [bold]coach library import[/bold] to attach an intervals workout."
+        )
+        raise typer.Exit(code=1)
+
+    table = Table(title=f"library_ref = {library_ref}", show_header=True, header_style="bold")
+    for col in ("Field", "Value"):
+        table.add_column(col)
+    table.add_row("library_ref", mapping["library_ref"])
+    table.add_row("sport", str(mapping.get("sport") or entry.sport))
+    table.add_row("intervals_workout_id", str(mapping["intervals_workout_id"]))
+    table.add_row("intervals_name", str(mapping.get("intervals_name") or "—"))
+    table.add_row("intervals_folder_id", str(mapping.get("intervals_folder_id") or "—"))
+    table.add_row("last_synced_at", str(mapping.get("last_synced_at") or "—"))
+    table.add_row("notes", str(mapping.get("notes") or "—"))
+    console.print(table)
+
+
+@library_app.command("unmap")
+def library_unmap_cmd(
+    library_ref: str = typer.Argument(..., help="Library ref to unmap."),
+    dry_run: bool = typer.Option(
+        False,
+        "--dry-run",
+        help="Show what would be unmapped without writing.",
+    ),
+) -> None:
+    """Remove the mapping row for one library_ref."""
+    from .library_map import delete_mapping, get_mapping
+
+    conn = connect()
+    init_schema(conn)
+    try:
+        existing = get_mapping(conn, library_ref=library_ref)
+        if existing is None:
+            console.print(f"[dim]{library_ref} is already unmapped — nothing to do.[/dim]")
+            return
+        if dry_run:
+            console.print(
+                f"[yellow]DRY RUN[/yellow] would unmap {library_ref} → "
+                f"workout #{existing['intervals_workout_id']} "
+                f"({existing.get('intervals_name') or '?'})"
+            )
+            return
+        delete_mapping(conn, library_ref=library_ref)
+    finally:
+        conn.close()
+
+    console.print(
+        f"[green]unmapped[/green] {library_ref} (was workout #{existing['intervals_workout_id']})"
+    )
+
+
+@library_app.command("import")
+def library_import_cmd(
+    dry_run: bool = typer.Option(
+        False,
+        "--dry-run",
+        help="Walk the proposed mappings without writing.",
+    ),
+    from_folder: int = typer.Option(
+        0,
+        "--from-folder",
+        help="Restrict candidates to one intervals folder id. 0 = all.",
+    ),
+    yes: bool = typer.Option(
+        False,
+        "--yes",
+        "-y",
+        help="Auto-accept the top-ranked candidate per unmapped ref (no prompting).",
+    ),
+    top_k: int = typer.Option(
+        5,
+        "--top-k",
+        help="How many candidates to show per ref.",
+    ),
+) -> None:
+    """Interactively map session-library refs to intervals.icu workouts (read-only on intervals)."""
+    from .library_map import apply_import_plan, fetch_workouts_sync, plan_import
+
+    try:
+        folder = from_folder if from_folder > 0 else None
+        intervals_workouts = fetch_workouts_sync(folder_id=folder)
+    except Exception as e:
+        console.print(f"[red]Could not fetch intervals workouts:[/red] {e}")
+        raise typer.Exit(code=1) from e
+
+    conn = connect()
+    init_schema(conn)
+    try:
+        plans = plan_import(
+            conn,
+            intervals_workouts=intervals_workouts,
+            folder_id=folder,
+            top_k=top_k,
+        )
+
+        if not plans:
+            console.print("[green]All library refs are already mapped.[/green]")
+            return
+
+        console.print(
+            f"[bold]library import[/bold] — {len(plans)} unmapped ref(s)"
+            + (" [yellow](DRY RUN)[/yellow]" if dry_run else "")
+        )
+
+        def _interactive_picker(*, library_ref: str, sport: str, candidates) -> int:
+            console.print(f"\n[bold]{library_ref}[/bold] ({sport})")
+            for i, w in enumerate(candidates, start=1):
+                folder_hint = f" folder={w.folder_id}" if w.folder_id else ""
+                type_hint = f" type={w.type}" if w.type else ""
+                console.print(f"  {i}. #{w.id}{type_hint}{folder_hint} — {w.name or '?'}")
+            console.print(f"  s. skip {library_ref}")
+            raw = typer.prompt("Pick", default="s")
+            if raw.strip().lower() in {"s", "skip", ""}:
+                return -1
+            try:
+                return int(raw)
+            except ValueError:
+                return -1
+
+        decided = apply_import_plan(
+            conn,
+            plans=plans,
+            picker=None if yes else _interactive_picker,
+            auto_top=yes,
+            dry_run=dry_run,
+        )
+    finally:
+        conn.close()
+
+    table = Table(title=("[DRY RUN] " if dry_run else "") + "library import result", show_header=True, header_style="bold")
+    for col in ("Action", "Library Ref", "Sport", "Picked Workout"):
+        table.add_column(col)
+    badge = {"map": "[green]map[/green]", "skip": "[dim]skip[/dim]", "already": "[dim]already[/dim]"}
+    for plan in decided:
+        if plan.action == "map" and plan.candidate is not None:
+            cand = f"#{plan.candidate.id} — {plan.candidate.name or '?'}"
+        else:
+            cand = "—"
+        table.add_row(badge.get(plan.action, plan.action), plan.library_ref, plan.sport, cand)
+    console.print(table)
+
+    mapped = sum(1 for p in decided if p.action == "map")
+    skipped = sum(1 for p in decided if p.action == "skip")
+    if dry_run:
+        console.print(
+            f"[dim]Dry-run — would map {mapped}, skip {skipped}. "
+            "Re-run without --dry-run to persist.[/dim]"
+        )
+    else:
+        console.print(f"[green]mapped[/green] {mapped} • [dim]skipped[/dim] {skipped}")
 
 
 if __name__ == "__main__":  # pragma: no cover - defensive entry
