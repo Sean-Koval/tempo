@@ -27,3 +27,24 @@
 - Watches:
   - R-17 (WATCH) — Sat 135-min ride enters the 75-min+ fueling window; 40-60 g/hr now scales to 80-90 g/hr by W27-W29
 - Long ride: 135 min Z2 with 2×15 min Z3 inserts (S5 Block 1) — scales 135 → 165 → 180 across W19-W21
+
+## 2026-05-11 — drafted 2026-W20
+- Phase: base_aerobic (2/4)
+- Target TSS: 380 (phase floor — **holding W19 envelope, not progressing**)
+- Sessions: 8 (4 strength + 4 bike) — structural repeat of W19
+- W19 outcome driving this draft:
+  - Actual 179 TSS vs 380 planned (47%)
+  - Strength sessions mostly landed (Mon ✓, Tue PM ✓, Wed missed, Fri appears late/missed)
+  - Tue tempo: 84 min / 71 TSS actual vs 90 min / 95 TSS planned — pulled short
+  - **Sat long ride: replaced with 60-min easy spin** (31 TSS actual vs 120 planned) — this is the critical miss
+  - Sun recovery: skipped
+- Signals driving shape:
+  - R-8 (SOFT) applied: ramping from 179 → 410 (originally-planned W20 target) violates ramp cap. Held at 380.
+  - No wellness data — R-1/R-2/R-3 cannot evaluate. Brief reports `samples: 0` across HRV/sleep/RHR.
+  - CTL latest 23.9, ATL 30.5, TSB ~-7 — mild fatigue, not red zone.
+  - Adherence patterns: insufficient_data (2 weeks of session history).
+- Overrides: none — held within rule envelope.
+- Watches:
+  - R-17 (WATCH) — Sat 135-min ride in fueling window; 40-60 g/hr practice continues
+  - **Macro drift watch** — CTL 24 vs trajectory target ~30 by W20 (start 28 + 2.2/wk × 1 = 30.2 expected; actual is flat/down). ~3 weeks of progress lost. If W20+W21 don't land, recommend `/bootstrap-plan` rerun at W22 review to recompress (target ~2026-08-21 for 16-wk envelope).
+- Recommendation surfaced to athlete: **start daily `/morning-check-in`** — agent is flying blind without HRV/sleep/RHR feeding R-1/R-2/R-3.
