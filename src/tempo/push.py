@@ -65,6 +65,11 @@ class PlannedSession:
     target_duration_s: int | None = None
     purpose: str | None = None
     notes: str | None = None
+    # Set when a mapping exists in library_workout_map for this session's
+    # library_ref. When present, the event POST attaches it as
+    # ``plan_workout_id`` so intervals.icu links the library workout instead
+    # of relying on free-form description text.
+    intervals_workout_id: int | None = None
 
     @property
     def external_id(self) -> str:
@@ -85,6 +90,8 @@ class PlannedSession:
             body["moving_time"] = int(self.target_duration_s)
         if self.target_tss is not None:
             body["icu_training_load"] = int(round(self.target_tss))
+        if self.intervals_workout_id is not None:
+            body["plan_workout_id"] = int(self.intervals_workout_id)
         return body
 
     def _event_name(self) -> str:
@@ -184,7 +191,22 @@ def load_planned_sessions(conn: sqlite3.Connection, *, week_id: str) -> list[Pla
         """,
         (week_id,),
     ).fetchall()
-    return [PlannedSession(**dict(r)) for r in rows]
+    sessions = [PlannedSession(**dict(r)) for r in rows]
+    refs = [s.library_ref for s in sessions if s.library_ref]
+    if refs:
+        from .library_map import lookup_workout_ids
+
+        try:
+            id_by_ref = lookup_workout_ids(conn, refs=refs)
+        except sqlite3.OperationalError:
+            # library_workout_map only exists post-schema-migration; older
+            # databases predating tempo-d5e Track A keep the inline-description
+            # fallback unchanged.
+            id_by_ref = {}
+        for s in sessions:
+            if s.library_ref and s.library_ref in id_by_ref:
+                s.intervals_workout_id = id_by_ref[s.library_ref]
+    return sessions
 
 
 # ---------------------------------------------------------------------------
@@ -506,6 +528,7 @@ def render_session_table_rows(planned: list[PlannedSession]) -> list[tuple[str, 
     for s in planned:
         dur = f"{s.target_duration_s // 60} min" if s.target_duration_s else "—"
         tss = str(int(s.target_tss)) if s.target_tss is not None else "—"
+        wkout = f"#{s.intervals_workout_id}" if s.intervals_workout_id is not None else "—"
         rows.append(
             (
                 s.date,
@@ -513,6 +536,7 @@ def render_session_table_rows(planned: list[PlannedSession]) -> list[tuple[str, 
                 s.library_ref or "—",
                 tss,
                 dur,
+                wkout,
                 s.purpose or "—",
             )
         )
