@@ -134,9 +134,14 @@ Trigger signals to check from the brief:
 
 ## Step 6 — Write the week file
 
-Write `plans/<plan-id>/weeks/<week_id>.md`. Format:
+Write `plans/<plan-id>/weeks/<week_id>.md`. Each session has a prose
+header AND a fenced ```yaml tempo:session block — the prose is human
+documentation, the YAML block is what `coach week import` parses into
+`sessions_planned` (the table `coach push-week` reads).
 
-```markdown
+Format:
+
+````markdown
 ---
 week_id: 2026-W18
 plan_id: 2026-ironman-lake-placid
@@ -156,17 +161,61 @@ intensity_distribution: { z1_z2: 75, z3: 15, z4_plus: 10 }
 - Purpose: recovery volume
 - Notes: keep HR under Z2-cap; no surges.
 
+```yaml tempo:session
+id_slug: mon-recovery-spin
+date: 2026-04-27
+sport: bike
+library_ref: easy_aerobic_ride
+target_tss: 55
+target_duration_s: 4500
+purpose: recovery volume
+notes: keep HR under Z2-cap; no surges.
+```
+
 ### Tuesday 2026-04-28 — threshold_run
 - Target TSS: 85
 ...
 
+```yaml tempo:session
+id_slug: tue-threshold-run
+date: 2026-04-28
+sport: run
+library_ref: threshold_run
+target_tss: 85
+target_duration_s: 3600
+purpose: threshold work
+notes: "15 WU / 4x5min @ thresh w/ 90s easy / 10 CD"
+```
+
 ## Notes
 - Drafted off HRV down-trend signal — pulled Wednesday hard ride → Z2.
 - R-11 (SOFT) overridden Thu/Fri because Sat is a full rest day.
-```
+````
+
+YAML block schema (option C — per tempo-1q2):
+
+| Field               | Required    | Notes                                                                                                                          |
+| ---                 | ---         | ---                                                                                                                            |
+| `id_slug`           | yes         | day-abbrev + archetype, e.g. `tue-am-tempo`, `sat-long-ride`. Composed into `<plan_id>/<week_id>/<id_slug>` for the DB row id. |
+| `date`              | yes         | ISO `YYYY-MM-DD`.                                                                                                              |
+| `sport`             | yes         | bike / run / swim / strength / brick.                                                                                          |
+| `library_ref`       | recommended | matches an entry in `knowledge/methodology/session-library/`.                                                                  |
+| `target_tss`        | recommended | numeric; omit if novel/strength.                                                                                               |
+| `target_duration_s` | recommended | integer seconds.                                                                                                               |
+| `purpose`           | optional    | one-line summary; surfaces in `coach push-week --dry-run`.                                                                     |
+| `notes`             | optional    | **quote** the value with `"…"` if it contains `:` (YAML parses unquoted `:` as mapping syntax).                                |
 
 Aim for 5–9 sessions. Each session gets a `library_ref` in the body or an
 explicit "inline (novel)" label with justification.
+
+After Sean reviews the diff, the bridge to intervals is:
+
+```
+coach week import <week-id> --dry-run   # parse + preview diff against the DB
+coach week import <week-id>             # UPSERT into sessions_planned
+coach push-week <week-id> --dry-run     # preview the intervals push
+coach push-week <week-id>               # write to intervals.icu
+```
 
 ## Step 7 — Append to the changelog
 
@@ -200,12 +249,16 @@ Wednesday's intensity in week 18"* six months from now.
 ## Step 9 — Do NOT
 
 - Do **not** push to intervals.icu. Sean reviews the diff, then runs
-  `coach push-week <week-id>` explicitly.
+  `coach week import <week-id>` followed by `coach push-week <week-id>`
+  explicitly.
 - Do **not** commit the files — diff first.
 - Do **not** touch `plan.yaml`. Macro changes are `bootstrap-plan`'s job.
 - Do **not** override a HARD rule. Back off the session.
 - Do **not** skip the changelog entry or the `log_decision` call.
 - Do **not** silently invent novel sessions when a library entry would fit.
+- Do **not** omit the per-session ```yaml tempo:session block — without it,
+  `coach week import` has nothing to read and `coach push-week` will say
+  "No planned sessions for <week>".
 
 ## Output summary for the user
 
@@ -217,4 +270,5 @@ At the end, print a short summary:
   constrained the draft.
 - Any macro drift flagged, even if within tolerance.
 
-Invite Sean to diff, then run `coach push-week <week-id>`.
+Invite Sean to diff, then run `coach week import <week-id>` followed by
+`coach push-week <week-id>`.
